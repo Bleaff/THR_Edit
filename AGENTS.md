@@ -100,4 +100,11 @@ Cover: message encode/decode, protocol parsing, discovery logic, parameter valid
   with the same id, so always match nodes by id *and* kind. PortAudio on Linux often fails on a USB device that PipeWire owns
   (`Invalid sample rate`); PipeWire is the Linux default. The PortAudio backend is only tested with a stand-in for
   `sounddevice` until someone runs it on a Mac (`docs/macos-testing.md`).
+- Shell habits on this machine: `cp` is aliased to `cp -i` (it hangs waiting for a prompt; use `/usr/bin/cp -f`), and `pkill -f`
+  matches the command line of your own shell command and kills it, so find the PID with `ps` and kill that instead.
+- Flatpak builds: run flatpak-builder through `org.flatpak.Builder` with `--env=FLATPAK_USER_DIR=$HOME/.local/share/flatpak`, keep
+  its state and build directories under `$HOME` (the host side cannot see a sandboxed `/tmp`), and run it in the foreground (a
+  background process cut off with its shell stops halfway through installing). See `packaging/flatpak/README.md`.
+- In a sandbox, anything written outside the granted folders is silently thrown away. Test that files you write actually
+  appear on the host (found when `~/Music` was not granted to the Flatpak and recordings vanished).
 

@@ -33,7 +33,7 @@ Each of these is prepared in `packaging/`; see the status in the table.
 | --- | --- | --- |
 | Arch / Manjaro (AUR) | `packaging/arch/PKGBUILD` | Builds with `makepkg` and the files land in the right places; all dependencies are in the official repositories. Not submitted: it needs the public repository URL first |
 | macOS `.app` / `.dmg` | `packaging/macos/` (`build.sh`) | The PyInstaller configuration was validated on Linux (the bundle starts, finds its data and opens the MIDI ports), but a Mac build has **not been run**; ad-hoc signed, not notarized |
-| Flatpak | `packaging/flatpak/` | Manifest drafted, **not built**; recording and the live plot would be unavailable in the sandbox |
+| Flatpak | `packaging/flatpak/` | Builds and runs against `org.kde.Platform//6.11` (tested on Linux with a THR5A: MIDI, USB audio, recording and the live stream all work inside the sandbox). It is the local development variant, not yet ready for Flathub (needs offline sources and screenshots) |
 
 Plug the amp in with its USB cable and switch it on. If something is missing, `thr-control doctor` explains it in plain
 words (for example: "add yourself to the audio group" or "install the PipeWire tools").

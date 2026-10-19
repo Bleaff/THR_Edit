@@ -335,3 +335,33 @@ def test_workflows_exist_and_use_the_scripts():
     mac = (ROOT / ".github/workflows/macos-app.yml").read_text()
     assert "macos-latest" in ci and "pytest" in ci and "ruff check" in ci and "mypy" in ci
     assert "packaging/macos/build.sh" in mac and "macos-13" in mac and "macos-14" in mac
+
+
+def test_flatpak_manifest_is_consistent_and_grants_only_what_is_needed():
+    text = (ROOT / "packaging/flatpak/io.github.bleaff.ThrControl.yaml").read_text()
+    assert f"app-id: {APP_ID}" in text and "command: thr-control-gui" in text
+    assert (
+        "runtime-version: '6.11'" in text and "base-version: '6.11'" in text
+    )  # must match each other
+    assert "io.qt.PySide.BaseApp" in text
+    args = [
+        ln.strip()[2:]
+        for ln in text.split("finish-args:")[1].split("modules:")[0].splitlines()
+        if ln.strip().startswith("- --")
+    ]
+    assert set(args) == {
+        "--share=ipc",
+        "--socket=wayland",
+        "--socket=fallback-x11",
+        "--device=all",  # MIDI (ALSA sequencer)
+        "--filesystem=xdg-run/pipewire-0",  # recording and live measurement
+        "--filesystem=xdg-music",  # takes must not vanish into the sandbox
+    }
+    assert (
+        "--share=network" not in args
+    )  # network is only for the dev build steps, never at runtime
+    assert "-Djack=false" in text  # the PyPI wheel needs libjack, which the runtime lacks
+    assert (
+        "io.github.bleaff.ThrControl.desktop" in text
+        and "pip3 install --prefix=/app --no-deps ." in text
+    )

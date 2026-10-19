@@ -15,6 +15,12 @@ finish-args:
   # MIDI: the amp is reached through the ALSA sequencer (/dev/snd/seq), which Flatpak exposes
   # only with device access. Nothing else in /dev is used.
   - --device=all
+  # Audio (recording, live response plot): the runtime ships pw-record / pw-play / pw-dump, but they
+  # need the PipeWire socket. This is the standard way to grant it.
+  - --filesystem=xdg-run/pipewire-0
+  # Recorded takes go to ~/Music/thr-control. Without this permission the sandbox would write them
+  # to a throwaway filesystem and they would silently disappear.
+  - --filesystem=xdg-music
 
 modules:
   - name: python-dependencies
@@ -47,3 +53,4 @@ modules:
     sources:
       - type: dir
         path: ../..
+        skip: [.git, .venv, .mypy_cache, .pytest_cache, .ruff_cache, logs, dist, build, build-dir, .flatpak-builder]
