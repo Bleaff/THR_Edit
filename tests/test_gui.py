@@ -349,3 +349,25 @@ def test_delay_time_follows_taps_and_sends_user_edits(app, setup):
     spin.setValue(400.0)  # user edit
     assert pump(app, lambda: ("delay_time", 4000) in amp.sets)
     assert spin.get() == 4000
+
+
+def test_modulation_knobs_follow_type_and_cab_selector(app, setup):
+    amp = FakeAmp(real_payload())
+    _, win = setup(amp)
+    assert pump(app, lambda: win.controls["master"].value() == 0x33)
+    panel = win.effects_panel
+    visible = lambda: [k.title.text() for k in panel.mod_knobs if not k.isHidden()]  # noqa: E731
+    amp.inject_event("modulation_type", 1)  # flanger: 5 parameters
+    assert pump(app, lambda: visible() == ["SPEED", "MANUAL", "DEPTH", "FEEDBACK", "SPREAD"])
+    amp.inject_event("modulation_type", 2)  # tremolo: 2 parameters
+    assert pump(app, lambda: visible() == ["FREQ", "DEPTH"])
+    amp.inject_event("modulation_p2", 33)
+    assert pump(app, lambda: win.controls["modulation_p2"].value() == 33)
+    win.controls["modulation_p1"].knob.setValue(61)
+    assert pump(app, lambda: ("modulation_p1", 61) in amp.sets)
+    # cab selector shows the amp's cab and sends user changes
+    amp.inject_event("cab", 3)
+    assert pump(app, lambda: win.controls["cab"].currentIndex() == 3)
+    win.controls["cab"].setCurrentIndex(5)
+    win.controls["cab"].activated.emit(5)
+    assert pump(app, lambda: ("cab", 5) in amp.sets)

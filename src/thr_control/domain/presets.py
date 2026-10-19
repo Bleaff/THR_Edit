@@ -81,11 +81,11 @@ class PresetBundle(BaseModel):
     presets: list[Preset]
 
 
-def apply_order(settings: dict[str, int]) -> list[tuple[str, int]]:
-    """Order in which to write a preset: amp model first.
+# Writes that reset other settings must go out before the settings they would reset:
+# the amp model resets the cab, and an effect type resets that effect's parameters.
+_APPLY_RANK = {"amp": 0, "cab": 1, "modulation_type": 1, "reverb_type": 1}
 
-    Changing the amp model makes the amp re-apply its own cab/tone defaults, so it
-    must go out before the individual parameters.
-    """
-    items = list(settings.items())
-    return sorted(items, key=lambda kv: kv[0] != "amp")
+
+def apply_order(settings: dict[str, int]) -> list[tuple[str, int]]:
+    """Order in which to write a preset (amp model, then cab/effect types, then the rest)."""
+    return sorted(settings.items(), key=lambda kv: _APPLY_RANK.get(kv[0], 2))

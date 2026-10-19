@@ -4,8 +4,8 @@ from typing import Any
 
 from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QVBoxLayout
 
-from ..protocol.thr_v2 import AMP_NAMES
-from .widgets import AmpSelector, ParamKnob
+from ..protocol.thr_v2 import AMP_NAMES, CAB_NAMES
+from .widgets import AmpSelector, ParamCombo, ParamKnob
 
 
 class AmplifierPanel(QGroupBox):
@@ -15,6 +15,17 @@ class AmplifierPanel(QGroupBox):
         self.selector.setToolTip(
             "Amp model names follow the THR10 order and are unverified on THR5"
         )
+        self.cab = ParamCombo(
+            "cab",
+            [n.upper() for n in CAB_NAMES],
+            "Speaker cabinet. Names follow the THR10 order and are unverified on THR5. "
+            "The amp picks its own cab when you change the amp model.",
+        )
+        cab_label = QLabel("CABINET")
+        cab_label.setObjectName("knobLabel")
+        cab_row = QHBoxLayout()
+        cab_row.addWidget(cab_label)
+        cab_row.addWidget(self.cab, 1)
         self.knobs = [
             ParamKnob("gain", "Gain"),
             ParamKnob("master", "Master"),
@@ -31,8 +42,9 @@ class AmplifierPanel(QGroupBox):
         note.setStyleSheet("color: #8a8a8a; font-size: 11px;")
         layout = QVBoxLayout(self)
         layout.addWidget(self.selector)
+        layout.addLayout(cab_row)
         layout.addLayout(row)
         layout.addWidget(note)
 
     def controls(self) -> list[Any]:
-        return [self.selector, *self.knobs]
+        return [self.selector, self.cab, *self.knobs]

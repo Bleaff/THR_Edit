@@ -87,7 +87,7 @@ def test_controller_no_reply():
 
 def test_controller_unknown_parameter():
     with pytest.raises(KeyError):
-        ThrController(FakeAmp(), settle=0).set_parameter("cab", 1)
+        ThrController(FakeAmp(), settle=0).set_parameter("compressor_type", 1)
 
 
 def test_cli_set_dry_run_and_validation(capsys):
@@ -153,3 +153,59 @@ def test_cli_delay_time_ms_suffix(capsys):
     assert cli.main(["set", "delay_time", "400ms"]) == 0
     assert "F0 43 7D 10 41 30 01 31 1F 20 F7" in capsys.readouterr().out  # 4000 = 0x1F20
     assert cli.main(["set", "delay_time", "5000ms"]) == 1  # beyond 999.9 ms
+
+
+def test_gate_and_compressor_parameters_verified_on_hardware():
+    # Offsets/ids checked on a THR5A: each write changed exactly this one dump byte.
+    expected = {
+        "gate_threshold": (0x51, 209),
+        "gate_release": (0x52, 210),
+        "compressor": (0x1F, 159),
+        "compressor_sustain": (0x11, 145),
+        "compressor_output": (0x12, 146),
+    }
+    for name, (cid, off) in expected.items():
+        p = thr_v2.PARAMETERS[name]
+        assert (p.command_id, p.dump_offset) == (cid, off)
+    assert thr_v2.build_set_command("compressor", 1)[-2] == 0x00
+    assert thr_v2.build_set_command("gate_threshold", 30).hex(" ").upper() == (
+        "F0 43 7D 10 41 30 01 51 00 1E F7"
+    )
+    amp = FakeAmp(real_payload())
+    ctl = ThrController(amp, settle=0)
+    for name, value in [("gate_threshold", 30), ("compressor_sustain", 70), ("compressor", 1)]:
+        assert ctl.set_parameter(name, value).ok
+    assert ctl.read_settings()["compressor_output"] == 0x32  # untouched neighbour
+
+
+# -- cab and modulation parameters (verified on a THR5A) --------------------------------
+def test_cab_and_modulation_parameters_table():
+    p = thr_v2.PARAMETERS
+    assert (p["cab"].command_id, p["cab"].dump_offset, p["cab"].maximum) == (0x06, 134, 5)
+    for i in range(1, 6):
+        q = p[f"modulation_p{i}"]
+        assert (q.command_id, q.dump_offset) == (0x20 + i, 160 + i)
+    assert thr_v2.build_set_command("cab", 3).hex(" ").upper() == "F0 43 7D 10 41 30 01 06 00 03 F7"
+    with pytest.raises(ValueError):
+        thr_v2.build_set_command("cab", 6)  # "none" on the THR10: not tested on a THR5
+    assert set(thr_v2.MODULATION_LABELS) == {0, 1, 2, 3}
+    assert len(thr_v2.MODULATION_TYPES) == 4 and len(thr_v2.CAB_NAMES) == 6
+
+
+def test_controller_cab_and_modulation_roundtrip():
+    amp = FakeAmp(real_payload())
+    ctl = ThrController(amp, settle=0)
+    for name, value in [
+        ("cab", 4),
+        ("modulation_type", 2),
+        ("modulation_p1", 77),
+        ("modulation_p5", 12),
+    ]:
+        assert ctl.set_parameter(name, value).ok
+    s = ctl.read_settings()
+    assert (s["cab"], s["modulation_type"], s["modulation_p1"], s["modulation_p5"]) == (
+        4,
+        2,
+        77,
+        12,
+    )

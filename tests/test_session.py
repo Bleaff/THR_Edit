@@ -114,7 +114,7 @@ def test_amp_events_reach_listener_without_echo_writes():
 
 def test_invalid_parameter_rejected_on_caller_thread():
     sess = DeviceSession(FakeBackend(None))
-    for bad in (("master", 101), ("cab", 1)):
+    for bad in (("master", 101), ("compressor_type", 1)):
         try:
             sess.set_parameter(*bad)
         except (ValueError, KeyError):

@@ -2,7 +2,7 @@
 
 Open-source Linux controller for Yamaha THR amplifiers over USB-MIDI (target: THR5 V2 / cross-flashed THR5A). See `roadmap.md` and `AGENTS.md`.
 
-**Status: Phase 5 (preset management); delay time is mapped.** `probe`, `decode`, `diff` are receive-only; `read`, `map`, `show` send only the settings request; `set` sends one validated parameter command and only with `--yes`. The transport allowlist permits nothing else, and firmware/bootloader commands (`DTA1ERASE`, `DTA1MAIN`, `DTA1ROMR`) are blocked by `protocol/safety.py`.
+**Status: Phase 5 (preset management); delay time, noise gate, compressor, cabinet and modulation parameters are mapped.** `probe`, `decode`, `diff` are receive-only; `read`, `map`, `show` send only the settings request; `set` sends one validated parameter command and only with `--yes`. The transport allowlist permits nothing else, and firmware/bootloader commands (`DTA1ERASE`, `DTA1MAIN`, `DTA1ROMR`) are blocked by `protocol/safety.py`.
 
 ## Install (Manjaro / Arch)
 
@@ -76,8 +76,9 @@ preset, or asks for a name if none is active.
   delete them freely, they stay deleted. They are starting points, and amp/effect type names are unverified on THR5.
 - Export writes `{"format": "thr-control-preset", "version": 1, "presets": [...]}`. Import accepts that or a single
   preset object, validates every value, assigns fresh ids, and skips presets identical to ones already present.
-- Only mapped parameters are stored (see `thr-control params`). Loading a preset that changes an effect may reset that
-  effect's unmapped settings (chorus speed, reverb time...).
+- Only mapped parameters are stored (see `thr-control params`). Loading a preset writes the amp model first, then cab
+  and effect types, then the rest. Settings that are still unmapped (reverb time/filter, delay cuts) may be reset by
+  the amp when a preset changes the reverb type.
 
 CLI: `thr-control presets list [--query blues] [--favorites]`, `presets apply "Warm Jazz" [--yes]`,
 `presets save "Name"` (reads the amp), `presets export FILE`, `presets import FILE`, `--library DIR` to use another folder.

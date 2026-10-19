@@ -98,6 +98,9 @@ class ParamKnob(QWidget):
         layout.addWidget(self.readout)
         self.knob.valueChanged.connect(self._on_value)
 
+    def set_label(self, label: str) -> None:
+        self.title.setText(label.upper())
+
     def _on_value(self, value: int) -> None:
         self.readout.setText(str(value))
         if not self._silent:

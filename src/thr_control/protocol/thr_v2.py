@@ -1,10 +1,10 @@
 """THR5 (V2 firmware) parameter table.
 
-Every entry below was observed on a real THR5A running THR5 V2 firmware:
-  * its command id appeared in the amp's own knob/button events
-    (tests/fixtures + logs/knobs2.log), and
-  * its dump offset changed in the knob map (tests/fixtures/thr5a_knob_map.json)
-    or matches the THR10 layout for the same id.
+Every entry below was verified on a real THR5A running THR5 V2 firmware, either because
+its command id appeared in the amp's own events and its dump offset moved in the knob map
+(tests/fixtures/thr5a_knob_map.json), or because writing it changed exactly that one dump
+byte and restored cleanly (delay time, gate threshold/release, compressor; see
+docs/protocol.md).
 
 Parameters not listed here are NOT writable through this application.
 """
@@ -82,8 +82,24 @@ class Parameter:
 # Amp model names are in THR10 index order; the order on THR5 is ASSUMED, not verified.
 AMP_NAMES = ("clean", "crunch", "lead", "brit hi", "modern")
 
+# Cabinet names follow the THR10 index order and are ASSUMED for the THR5 (values 0-5 were all
+# accepted on a THR5A; 6 = "none" on the THR10 was deliberately not tested).
+CAB_NAMES = ("us 4x12", "us 2x12", "brit 4x12", "brit 2x12", "1x12", "4x10")
+
+# Modulation types and the labels of their parameters follow the THR10 table and are ASSUMED
+# for the THR5. Verified on a THR5A: types 0-3 are accepted, each loads its own defaults, and
+# parameters p1-p5 (ids 21-25) each write their own byte for every type.
+MODULATION_TYPES = ("chorus", "flanger", "tremolo", "phaser")
+MODULATION_LABELS: dict[int, tuple[str, ...]] = {
+    0: ("Speed", "Depth", "Mix"),
+    1: ("Speed", "Manual", "Depth", "Feedback", "Spread"),
+    2: ("Freq", "Depth"),
+    3: ("Speed", "Manual", "Depth", "Feedback"),
+}
+
 _PARAMS = (
     Parameter("amp", 0x00, 128, Kind.ENUM, 4, "MIC TYPE knob; also re-applies tone/cab on the amp"),
+    Parameter("cab", 0x06, 134, Kind.ENUM, 5, "the amp picks its own cab when the model changes"),
     Parameter("gain", 0x01, 129, Kind.LEVEL, note="BLEND knob on the THR5A case"),
     Parameter("master", 0x02, 130, Kind.LEVEL),
     Parameter("bass", 0x03, 131, Kind.LEVEL, note="TONE knob moves bass/middle/treble together"),
@@ -91,6 +107,16 @@ _PARAMS = (
     Parameter("treble", 0x05, 133, Kind.LEVEL),
     Parameter(
         "modulation_type", 0x20, 160, Kind.ENUM, 3, "chorus/flanger/tremolo/phaser order assumed"
+    ),
+    *(
+        Parameter(
+            f"modulation_p{i}",
+            0x20 + i,
+            160 + i,
+            Kind.LEVEL,
+            note="meaning depends on modulation_type; switching type resets p1-p5 to defaults",
+        )
+        for i in range(1, 6)
     ),
     Parameter("modulation", 0x2F, 175, Kind.SWITCH),
     Parameter(
@@ -110,7 +136,16 @@ _PARAMS = (
     Parameter("reverb_type", 0x40, 192, Kind.ENUM, 3, "hall/room/plate/spring order assumed"),
     Parameter("reverb_level", 0x4B, 203, Kind.LEVEL),
     Parameter("reverb", 0x4F, 207, Kind.SWITCH),
-    Parameter("gate", 0x5F, 223, Kind.SWITCH),
+    Parameter("gate", 0x5F, 223, Kind.SWITCH, note="some amp models switch it on themselves"),
+    Parameter("gate_threshold", 0x51, 209, Kind.LEVEL),
+    Parameter("gate_release", 0x52, 210, Kind.LEVEL),
+    Parameter("compressor", 0x1F, 159, Kind.SWITCH),
+    Parameter(
+        "compressor_sustain", 0x11, 145, Kind.LEVEL, note="stomp-type compressor (type 0) only"
+    ),
+    Parameter(
+        "compressor_output", 0x12, 146, Kind.LEVEL, note="stomp-type compressor (type 0) only"
+    ),
 )
 
 PARAMETERS: dict[str, Parameter] = {p.name: p for p in _PARAMS}

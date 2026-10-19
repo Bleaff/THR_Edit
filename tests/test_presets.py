@@ -152,7 +152,7 @@ def test_import_single_preset_and_errors(manager, tmp_path):
                 "presets": [
                     {"name": "Fine", "settings": {"gain": 9}},
                     {"name": "Bad", "settings": {"gain": 900}},
-                    {"name": "Unknown", "settings": {"cab": 1}},
+                    {"name": "Unknown", "settings": {"compressor_type": 1}},
                 ]
             }
         )
@@ -218,3 +218,23 @@ def test_cli_presets_list_export_import_apply_dry_run(tmp_path, capsys):
     assert "Dry run" in capsys.readouterr().out
     assert cli.main(["presets", "apply", "nothing", "--library", lib]) == 1
     assert cli.main(["presets", "apply", "--library", lib]) == 1
+
+
+def test_apply_order_types_and_cab_before_their_parameters():
+    order = [
+        n
+        for n, _ in apply_order(
+            {
+                "modulation_p1": 5,
+                "gain": 1,
+                "cab": 2,
+                "modulation_type": 3,
+                "reverb_type": 1,
+                "amp": 4,
+                "modulation": 1,
+            }
+        )
+    ]
+    assert order[0] == "amp"
+    assert set(order[1:4]) == {"cab", "modulation_type", "reverb_type"}
+    assert order.index("modulation_type") < order.index("modulation_p1")

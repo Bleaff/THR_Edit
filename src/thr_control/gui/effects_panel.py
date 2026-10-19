@@ -4,7 +4,7 @@ from typing import Any
 
 from PySide6.QtWidgets import QGridLayout, QGroupBox, QHBoxLayout, QLabel, QVBoxLayout
 
-from ..protocol.thr_v2 import PARAMETERS
+from ..protocol.thr_v2 import MODULATION_LABELS, PARAMETERS
 from .widgets import ParamCombo, ParamKnob, ParamSwitch, ParamTime
 
 ASSUMED = "Type names follow the THR10 order; unverified on THR5"
@@ -30,9 +30,10 @@ class EffectsPanel(QGroupBox):
             "modulation_type", ["Chorus", "Flanger", "Tremolo", "Phaser"], ASSUMED
         )
         modulation.row.addWidget(self.mod_type, 1)
-        hint = QLabel("Speed/depth controls are not mapped yet.")
-        hint.setStyleSheet("color: #8a8a8a; font-size: 11px;")
-        modulation.body.addWidget(hint)
+        self.mod_knobs = [ParamKnob(f"modulation_p{i}", f"P{i}") for i in range(1, 6)]
+        for knob in self.mod_knobs:
+            modulation.body.addWidget(knob)
+        self.mod_type.activated.connect(lambda _i: self.update_modulation_layout())
 
         delay = _EffectBox("DELAY", "delay")
         self.delay_feedback = ParamKnob("delay_feedback", "Feedback")
@@ -53,24 +54,49 @@ class EffectsPanel(QGroupBox):
         reverb.body.addWidget(self.reverb_level)
 
         gate = _EffectBox("NOISE GATE", "gate")
-        gate_hint = QLabel("Threshold/release are not mapped yet.")
-        gate_hint.setStyleSheet("color: #8a8a8a; font-size: 11px;")
-        gate.body.addWidget(gate_hint)
+        self.gate_threshold = ParamKnob("gate_threshold", "Threshold")
+        self.gate_release = ParamKnob("gate_release", "Release")
+        gate.body.addWidget(self.gate_threshold)
+        gate.body.addWidget(self.gate_release)
+
+        compressor = _EffectBox("COMPRESSOR", "compressor")
+        self.comp_sustain = ParamKnob("compressor_sustain", "Sustain")
+        self.comp_output = ParamKnob("compressor_output", "Output")
+        compressor.body.addWidget(self.comp_sustain)
+        compressor.body.addWidget(self.comp_output)
+        compressor.setToolTip(
+            "Software-only: the THR5A has no compressor knob. Sustain/output apply to the "
+            "stomp-type compressor."
+        )
 
         grid = QGridLayout(self)
         grid.addWidget(modulation, 0, 0)
         grid.addWidget(delay, 0, 1)
         grid.addWidget(reverb, 1, 0)
         grid.addWidget(gate, 1, 1)
-        self._boxes = (modulation, delay, reverb, gate)
+        grid.addWidget(compressor, 2, 0)
+        self._boxes = (modulation, delay, reverb, gate, compressor)
+
+    def update_modulation_layout(self) -> None:
+        """Label and show only the parameter knobs the current modulation type uses."""
+        labels = MODULATION_LABELS.get(self.mod_type.get(), ())
+        for i, knob in enumerate(self.mod_knobs):
+            knob.setVisible(i < len(labels))
+            if i < len(labels):
+                knob.set_label(labels[i])
 
     def controls(self) -> list[Any]:
         return [
             *(box.switch for box in self._boxes),
             self.mod_type,
+            *self.mod_knobs,
             self.delay_time,
             self.delay_feedback,
             self.delay_level,
             self.reverb_type,
             self.reverb_level,
+            self.gate_threshold,
+            self.gate_release,
+            self.comp_sustain,
+            self.comp_output,
         ]

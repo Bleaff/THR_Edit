@@ -107,6 +107,46 @@ Another system message, `... 30 41 30 02 02 F7`, follows a settings request; mea
 - Turning the delay on and tapping also changed delay feedback and cut bytes (offsets 179-181) in one test, so the amp
   may reload parts of the delay block; not isolated.
 
+## Verified: noise gate and compressor (software-only controls)
+
+The THR5A panel has no gate or compressor knob, and none of these bytes ever moved during the knob map, but the dump
+holds both blocks. Writing the THR10 command ids worked on hardware (each write changed exactly one dump byte; all
+five were restored and the full 256-byte payload ended identical to the start):
+
+| Parameter | Command id | Dump offset | Tested |
+| --- | --- | --- | --- |
+| gate_threshold | `51` | 209 | 50 -> 30 -> 50 |
+| gate_release | `52` | 210 | 50 -> 70 -> 50 |
+| compressor on/off | `1F` | 159 | off -> on -> off (`00` on, `7F` off) |
+| compressor_sustain | `11` | 145 | 50 -> 70 -> 50 |
+| compressor_output | `12` | 146 | 50 -> 40 -> 50 |
+
+Caveats: sustain/output apply to the stomp-type compressor (type 0, which this amp was set to; offset 144). The type
+parameter (`10`) and the rack-type parameters were not tested, and in rack mode ids `11`/`12` mean other parameters, so
+do not write them if the type is not 0. Gate on/off is also switched by the amp itself for some amp models (it turned on
+at the last MIC TYPE position, amp model 4).
+
+## Verified: cabinet and modulation parameters
+
+Tested on a THR5A with the same write / read-dump / restore method (restore left the dump byte-identical):
+
+- **Cab** (id `06`, dump offset 134): values 0-5 were all accepted with no other byte changing. Value 6 ("none" on the
+  THR10) was deliberately not tested, so the app limits cab to 0-5. Cab names are the THR10's index order and are
+  UNVERIFIED on a THR5 (the amp picks its own cab when the amp model changes).
+- **Modulation type** (id `20`, offset 160): 0-3 accepted. Each type loads its own default parameter block
+  (type 0: 53,29,34,58,99; type 1: 14,22,37,58,99; type 3: 53,9,88,6,23; type 2 loaded 50,50 and left the rest).
+  Type names (chorus, flanger, tremolo, phaser) and the per-type parameter labels are the THR10's and are UNVERIFIED
+  on a THR5.
+- **Modulation parameters p1-p5** (ids `21`-`25`, offsets 161-165): each write changed exactly its own byte for every
+  type, including parameters a type does not appear to use (tremolo p3-p5). The GUI labels and shows only the knobs
+  the assumed type uses.
+- **Preset apply order:** because a type change resets that effect's parameters and an amp change resets the cab,
+  presets are written amp first, then cab and effect types, then everything else. Applying a preset in one fast burst
+  (no delays) through the GUI's session path stuck completely, and restoring a snapshot afterwards reproduced the
+  original dump exactly. Chorus/phaser/etc. parameters are therefore no longer lost when loading presets.
+- Still unmapped (and reset by the amp when the reverb type changes): reverb time/filter/pre-delay/cuts and delay
+  high/low cut.
+
 ## Documented by reference sources, NOT yet verified on this THR5
 
 Sources: `SysExTones/sysex_tones` (THR10; AGPL-3.0, so only facts are used, no code), `MathisRosenhauer/THR_Footswitch`

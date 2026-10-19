@@ -152,12 +152,14 @@ class MainWindow(QMainWindow):
             if control is not None:
                 control.apply(value)
         self._have_state = True
+        self.effects_panel.update_modulation_layout()
         self._update_preset_label()
 
     def _on_param(self, name: str, value: int) -> None:
         control = self.controls.get(name)
         if control is not None:
             control.apply(value)
+        self.effects_panel.update_modulation_layout()
         self._update_preset_label()
 
     # -- presets -----------------------------------------------------------
@@ -186,6 +188,7 @@ class MainWindow(QMainWindow):
             if control is not None:
                 control.apply(value)
             self._on_user_changed(name, value)
+        self.effects_panel.update_modulation_layout()
         self._update_preset_label()
         self.diagnostics.add_log(f"loaded preset {preset.name!r}")
 
