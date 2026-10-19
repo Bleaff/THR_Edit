@@ -1,0 +1,105 @@
+{
+  "format": "thr-control-preset",
+  "version": 1,
+  "presets": [
+    {
+      "name": "Warm Jazz",
+      "genre": "Jazz",
+      "notes": "Round, dark clean with a little room. Starting point.",
+      "settings": {
+        "amp": 0,
+        "gain": 22,
+        "master": 45,
+        "bass": 62,
+        "middle": 48,
+        "treble": 30,
+        "modulation": 0,
+        "delay": 0,
+        "reverb": 1,
+        "reverb_type": 1,
+        "reverb_level": 30,
+        "gate": 0
+      }
+    },
+    {
+      "name": "Texas Blues",
+      "genre": "Blues",
+      "notes": "Edge-of-breakup crunch with spring-style reverb. Starting point.",
+      "settings": {
+        "amp": 1,
+        "gain": 48,
+        "master": 45,
+        "bass": 50,
+        "middle": 62,
+        "treble": 55,
+        "modulation": 0,
+        "delay": 0,
+        "reverb": 1,
+        "reverb_type": 3,
+        "reverb_level": 38,
+        "gate": 0
+      }
+    },
+    {
+      "name": "Indie Clean",
+      "genre": "Indie",
+      "notes": "Bright clean with light chorus and a short delay. Starting point.",
+      "settings": {
+        "amp": 0,
+        "gain": 30,
+        "master": 45,
+        "bass": 45,
+        "middle": 50,
+        "treble": 65,
+        "modulation": 1,
+        "modulation_type": 0,
+        "delay": 1,
+        "delay_feedback": 25,
+        "delay_level": 22,
+        "reverb": 1,
+        "reverb_type": 0,
+        "reverb_level": 28,
+        "gate": 0
+      }
+    },
+    {
+      "name": "Golden Brown",
+      "genre": "Indie",
+      "notes": "Glassy clean, chorus and hall for arpeggios. Starting point.",
+      "settings": {
+        "amp": 0,
+        "gain": 28,
+        "master": 42,
+        "bass": 40,
+        "middle": 45,
+        "treble": 72,
+        "modulation": 1,
+        "modulation_type": 0,
+        "delay": 0,
+        "reverb": 1,
+        "reverb_type": 0,
+        "reverb_level": 45,
+        "gate": 0
+      }
+    },
+    {
+      "name": "Indie Rock",
+      "genre": "Rock",
+      "notes": "Mid-gain crunch with tight gate and a touch of reverb. Starting point.",
+      "settings": {
+        "amp": 2,
+        "gain": 62,
+        "master": 40,
+        "bass": 52,
+        "middle": 58,
+        "treble": 60,
+        "modulation": 0,
+        "delay": 0,
+        "reverb": 1,
+        "reverb_type": 1,
+        "reverb_level": 18,
+        "gate": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# Captured 2026-10-19 with `thr-control probe` (app closed) while using the amp's tuner. Timings in seconds from start,
+# heartbeats (F0 43 7D 60 44 54 41 30 F7) otherwise arrive every 0.5 s:
+#   heartbeats stop after t=18.02 and resume at t=30.52 (12.5 s gap)
+#   settings dumps (276 B, unsolicited) arrive at t=30.07, 32.71, 37.70, 39.86
+# No other message types were received. Only this summary is stored; the full log was logs/tuner2.log.

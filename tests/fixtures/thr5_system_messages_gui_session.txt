@@ -1,0 +1,5 @@
+# Seen 2026-10-19 in the GUI's raw monitor on a THR5A (THR5 V2 firmware) while the user pressed the tuner button.
+# NOT confirmed to be tuner events: a probe-only capture of a tuner session (app closed) contained none of them.
+# The second one arrived 1 ms after a settings dump that the app had requested.
+F0 43 7D 30 41 30 00 01 F7
+F0 43 7D 30 41 30 00 00 F7

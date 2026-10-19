@@ -1,0 +1,2 @@
+# Captured 2026-10-19: sent by the amp immediately after the settings dump reply (same request).
+F0 43 7D 30 41 30 02 02 F7

@@ -1,0 +1,45 @@
+[project]
+name = "thr-control"
+version = "0.1.0"
+description = "Open-source Linux controller for Yamaha THR guitar amplifiers (USB-MIDI SysEx)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "mido>=1.3",
+    "python-rtmidi>=1.5",
+    "pydantic>=2.7",
+    "PySide6-Essentials>=6.7",
+]
+
+[project.scripts]
+thr-control = "thr_control.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/thr_control"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/thr_control/gui/style.py" = ["E501"]
+
+[tool.mypy]
+strict = true
+files = ["src"]
+[[tool.mypy.overrides]]
+module = ["mido.*", "rtmidi.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

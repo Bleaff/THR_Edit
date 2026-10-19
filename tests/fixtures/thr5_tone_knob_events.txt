@@ -1,0 +1,11 @@
+# Captured 2026-10-19 with `thr-control probe` while turning only the TONE knob (first 9 of 2001 messages,
+# heartbeats removed). The amp emits one 03/04/05 triplet per step, ~100 steps/s.
+F0 43 7D 10 41 30 01 03 00 35 F7
+F0 43 7D 10 41 30 01 04 00 31 F7
+F0 43 7D 10 41 30 01 05 00 45 F7
+F0 43 7D 10 41 30 01 03 00 34 F7
+F0 43 7D 10 41 30 01 04 00 33 F7
+F0 43 7D 10 41 30 01 05 00 45 F7
+F0 43 7D 10 41 30 01 03 00 34 F7
+F0 43 7D 10 41 30 01 04 00 34 F7
+F0 43 7D 10 41 30 01 05 00 45 F7

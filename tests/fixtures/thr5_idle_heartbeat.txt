@@ -1,0 +1,4 @@
+# Captured 2026-10-19 with `thr-control probe --duration 5` (read-only) on a
+# THR5A flashed with THR5 V2 firmware, idle, no knobs touched, no host traffic.
+# Same message repeated every ~0.5 s (10 messages in 5 s).
+F0 43 7D 60 44 54 41 30 F7
