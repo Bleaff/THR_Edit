@@ -80,8 +80,8 @@ class PresetBrowser(QWidget):
         self.import_button = QPushButton("Import…")
         self.export_button = QPushButton("Export…")
         self.load_button.setToolTip(
-            "Applies the preset's amp, cab and effect settings. Effect values this app cannot map "
-            "yet (reverb time/filter, delay cuts) may be reset by the amp."
+            "Applies the preset's amp, cab and effect settings to the amp (amp model first, then "
+            "cab and effect types, then everything else)."
         )
 
         grid = QGridLayout()

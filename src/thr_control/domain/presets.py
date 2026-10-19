@@ -87,5 +87,11 @@ _APPLY_RANK = {"amp": 0, "cab": 1, "modulation_type": 1, "reverb_type": 1}
 
 
 def apply_order(settings: dict[str, int]) -> list[tuple[str, int]]:
-    """Order in which to write a preset (amp model, then cab/effect types, then the rest)."""
-    return sorted(settings.items(), key=lambda kv: _APPLY_RANK.get(kv[0], 2))
+    """Order in which to write a preset (amp model, then cab/effect types, then the rest).
+
+    Values that only apply to another type than the preset's own (e.g. spring-reverb
+    values in a hall preset) are dropped: the same command id would otherwise overwrite a
+    different setting.
+    """
+    usable = thr_v2.filter_applicable(settings)
+    return sorted(usable.items(), key=lambda kv: _APPLY_RANK.get(kv[0], 2))

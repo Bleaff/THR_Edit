@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -224,4 +225,36 @@ class ParamTime(QDoubleSpinBox):
     def apply(self, value: int) -> None:
         self._silent = True
         self.setValue(value / 10)
+        self._silent = False
+
+
+class ParamSpin(QSpinBox):
+    """Integer value in the amp's own units (used for 14-bit parameters like cut frequencies)."""
+
+    user_changed = Signal(str, int)
+
+    def __init__(
+        self, param_name: str, minimum: int, maximum: int, suffix: str = "", tooltip: str = ""
+    ) -> None:
+        super().__init__()
+        self.param_name = param_name
+        self._silent = False
+        self.setRange(minimum, maximum)
+        if suffix:
+            self.setSuffix(suffix)
+        if tooltip:
+            self.setToolTip(tooltip)
+        self.setKeyboardTracking(False)  # send once on Enter/arrows, not per keystroke
+        self.valueChanged.connect(self._on_value)
+
+    def _on_value(self, value: int) -> None:
+        if not self._silent:
+            self.user_changed.emit(self.param_name, value)
+
+    def get(self) -> int:
+        return int(self.value())
+
+    def apply(self, value: int) -> None:
+        self._silent = True
+        self.setValue(value)
         self._silent = False

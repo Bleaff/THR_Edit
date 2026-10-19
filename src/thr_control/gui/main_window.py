@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from ..domain.presets import Preset, apply_order
 from ..midi.discovery import list_input_ports, list_output_ports
+from ..protocol.thr_v2 import filter_applicable
 from ..services.preset_manager import PresetError, PresetManager
 from .amplifier_panel import AmplifierPanel
 from .bridge import SessionBridge
@@ -37,7 +39,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.setWindowTitle("THR Control")
-        self.resize(1200, 760)
+        self.resize(1200, 820)
         self.bridge = bridge
         self.manager = manager
         self.active: Preset | None = None
@@ -89,7 +91,11 @@ class MainWindow(QMainWindow):
         mv.addWidget(self.effects_panel)
         mv.addStretch(1)
         tabs = QTabWidget()
-        tabs.addTab(main_page, "Amp && Effects")
+        scroll = QScrollArea()  # the page is taller than most laptop screens
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(main_page)
+        tabs.addTab(scroll, "Amp && Effects")
         tabs.addTab(self.diagnostics, "Diagnostics")
 
         right = QWidget()
@@ -152,19 +158,20 @@ class MainWindow(QMainWindow):
             if control is not None:
                 control.apply(value)
         self._have_state = True
-        self.effects_panel.update_modulation_layout()
+        self.effects_panel.update_layouts()
         self._update_preset_label()
 
     def _on_param(self, name: str, value: int) -> None:
         control = self.controls.get(name)
         if control is not None:
             control.apply(value)
-        self.effects_panel.update_modulation_layout()
+        self.effects_panel.update_layouts()
         self._update_preset_label()
 
     # -- presets -----------------------------------------------------------
     def current_settings(self) -> dict[str, int]:
-        return {name: control.get() for name, control in self.controls.items()}
+        """Every control's value, minus values that only apply to another reverb type."""
+        return filter_applicable({name: c.get() for name, c in self.controls.items()})
 
     def is_modified(self) -> bool:
         if self.active is None or not self._have_state:
@@ -188,7 +195,7 @@ class MainWindow(QMainWindow):
             if control is not None:
                 control.apply(value)
             self._on_user_changed(name, value)
-        self.effects_panel.update_modulation_layout()
+        self.effects_panel.update_layouts()
         self._update_preset_label()
         self.diagnostics.add_log(f"loaded preset {preset.name!r}")
 

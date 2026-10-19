@@ -18,6 +18,7 @@ from ..domain.presets import (
     Preset,
     PresetBundle,
 )
+from ..protocol.thr_v2 import filter_applicable
 from ..storage.repository import PresetRepository
 
 SEED_MARKER = ".starters_seeded"
@@ -101,7 +102,9 @@ class PresetManager:
         notes: str = "",
     ) -> Preset:
         try:
-            preset = Preset(name=name, settings=dict(settings), genre=genre, notes=notes)
+            preset = Preset(
+                name=name, settings=filter_applicable(settings), genre=genre, notes=notes
+            )
         except ValidationError as exc:
             raise PresetError(str(exc)) from exc
         return self._save(preset)
@@ -109,7 +112,9 @@ class PresetManager:
     def update_settings(self, preset_id: str, settings: dict[str, int]) -> Preset:
         preset = self._require(preset_id)
         try:
-            updated = Preset.model_validate({**preset.model_dump(), "settings": dict(settings)})
+            updated = Preset.model_validate(
+                {**preset.model_dump(), "settings": filter_applicable(settings)}
+            )
         except ValidationError as exc:
             raise PresetError(str(exc)) from exc
         return self._save(updated)

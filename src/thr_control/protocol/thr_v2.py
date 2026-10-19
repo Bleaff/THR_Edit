@@ -11,6 +11,7 @@ Parameters not listed here are NOT writable through this application.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 
@@ -36,6 +37,9 @@ class Parameter:
     note: str = ""
     minimum: int = 0
     width: int = 1  # 1: command body ``<id> 00 <v>``; 2: 14-bit ``<id> <v>>>7 <v>&7F``
+    # (type parameter name, types it applies to). Some command ids mean different things per
+    # type, so a value is only meaningful for the types listed here.
+    applies_when: tuple[str, tuple[int, ...]] | None = None
 
     def to_wire(self, value: int) -> int:
         """Convert a user value (switch: 1/0) to the wire/dump byte; raise ValueError if invalid."""
@@ -97,6 +101,9 @@ MODULATION_LABELS: dict[int, tuple[str, ...]] = {
     3: ("Speed", "Manual", "Depth", "Feedback"),
 }
 
+_FULL = ("reverb_type", (0, 1, 2))
+_SPRING = ("reverb_type", (3,))
+
 _PARAMS = (
     Parameter("amp", 0x00, 128, Kind.ENUM, 4, "MIC TYPE knob; also re-applies tone/cab on the amp"),
     Parameter("cab", 0x06, 134, Kind.ENUM, 5, "the amp picks its own cab when the model changes"),
@@ -131,10 +138,25 @@ _PARAMS = (
         width=2,
     ),
     Parameter("delay_feedback", 0x33, 179, Kind.LEVEL),
+    Parameter(
+        "delay_high_cut", 0x34, 180, Kind.LEVEL, 16001, "Hz (assumed; original 4000)", 1000, 2
+    ),
+    Parameter("delay_low_cut", 0x36, 182, Kind.LEVEL, 8000, "Hz (assumed; original 21)", 21, 2),
     Parameter("delay_level", 0x38, 184, Kind.LEVEL),
     Parameter("delay", 0x3F, 191, Kind.SWITCH),
     Parameter("reverb_type", 0x40, 192, Kind.ENUM, 3, "hall/room/plate/spring order assumed"),
     Parameter("reverb_level", 0x4B, 203, Kind.LEVEL),
+    # Hall / room / plate (reverb_type 0-2): 14-bit values, units unverified.
+    Parameter("reverb_time", 0x41, 193, Kind.LEVEL, 200, "raw units", 3, 2, _FULL),
+    Parameter("reverb_pre", 0x43, 195, Kind.LEVEL, 2000, "raw units", 1, 2, _FULL),
+    Parameter("reverb_low_cut", 0x45, 197, Kind.LEVEL, 8000, "Hz (assumed)", 21, 2, _FULL),
+    Parameter("reverb_high_cut", 0x47, 199, Kind.LEVEL, 16001, "Hz (assumed)", 1000, 2, _FULL),
+    Parameter("reverb_high_ratio", 0x49, 201, Kind.LEVEL, 10, "", 1, 1, _FULL),
+    Parameter("reverb_low_ratio", 0x4A, 202, Kind.LEVEL, 14, "", 0, 1, _FULL),
+    # Spring (reverb_type 3): id 0x41 is the same wire message as reverb_time but lands in a
+    # different dump byte, so the two must never be mixed up.
+    Parameter("reverb_spring_reverb", 0x41, 193, Kind.LEVEL, 100, "", 0, 1, _SPRING),
+    Parameter("reverb_spring_filter", 0x42, 194, Kind.LEVEL, 100, "", 0, 1, _SPRING),
     Parameter("reverb", 0x4F, 207, Kind.SWITCH),
     Parameter("gate", 0x5F, 223, Kind.SWITCH, note="some amp models switch it on themselves"),
     Parameter("gate_threshold", 0x51, 209, Kind.LEVEL),
@@ -149,7 +171,34 @@ _PARAMS = (
 )
 
 PARAMETERS: dict[str, Parameter] = {p.name: p for p in _PARAMS}
-BY_COMMAND_ID: dict[int, Parameter] = {p.command_id: p for p in _PARAMS}
+PARAMS_BY_ID: dict[int, list[Parameter]] = {}
+for _p in _PARAMS:
+    PARAMS_BY_ID.setdefault(_p.command_id, []).append(_p)
+
+
+def applies(param: Parameter, settings: Mapping[str, int] | None) -> bool:
+    """True if *param* is meaningful given *settings* (its type must be known and match)."""
+    if param.applies_when is None:
+        return True
+    if settings is None:
+        return True  # no context: cannot tell, so do not exclude
+    type_name, types = param.applies_when
+    return settings.get(type_name) in types
+
+
+def filter_applicable(settings: Mapping[str, int]) -> dict[str, int]:
+    """Drop type-dependent values whose own type is missing or does not match."""
+    return {
+        k: v
+        for k, v in settings.items()
+        if k not in PARAMETERS or _applies_strict(PARAMETERS[k], settings)
+    }
+
+
+def _applies_strict(param: Parameter, settings: Mapping[str, int]) -> bool:
+    return (
+        param.applies_when is None or settings.get(param.applies_when[0]) in param.applies_when[1]
+    )
 
 
 def build_set_command(name: str, value: int) -> bytes:
@@ -158,15 +207,26 @@ def build_set_command(name: str, value: int) -> bytes:
     return m.COMMAND_PREFIX + param.command_body(param.to_wire(value)) + bytes([m.SYSEX_END])
 
 
-def decode_command(body: bytes) -> tuple[Parameter, int] | None:
-    """Interpret a command body (after the command prefix, before F7) as (parameter, user value)."""
-    param = BY_COMMAND_ID.get(body[0]) if body else None
-    if param is None:
+def decode_command(
+    body: bytes, context: Mapping[str, int] | None = None
+) -> tuple[Parameter, int] | None:
+    """Interpret a command body (after the command prefix, before F7) as (parameter, user value).
+
+    Some ids are shared by several parameters; *context* (the last known settings, which
+    include the type parameters) picks the one that applies.
+    """
+    candidates = PARAMS_BY_ID.get(body[0], []) if body else []
+    matches = []
+    for param in candidates:
+        wire = param.wire_from_body(body)
+        if wire is not None and param.is_valid_wire(wire):
+            matches.append((param, param.from_wire(wire)))
+    if not matches:
         return None
-    wire = param.wire_from_body(body)
-    if wire is None or not param.is_valid_wire(wire):
-        return None
-    return param, param.from_wire(wire)
+    for param, value in matches:
+        if applies(param, context):
+            return param, value
+    return None
 
 
 def is_allowed_set_command(data: bytes) -> bool:
@@ -179,5 +239,6 @@ def is_allowed_set_command(data: bytes) -> bool:
 
 
 def decode_dump(payload: bytes) -> dict[str, int]:
-    """Named values (user units) of every table parameter in a dump payload."""
-    return {p.name: p.from_wire(p.read_wire(payload)) for p in _PARAMS}
+    """Named values (user units) of every table parameter that applies to the dump's own types."""
+    values = {p.name: p.from_wire(p.read_wire(payload)) for p in _PARAMS}
+    return {p.name: values[p.name] for p in _PARAMS if applies(p, values)}

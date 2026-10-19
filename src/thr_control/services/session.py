@@ -104,6 +104,7 @@ class DeviceSession:
         self._clock = clock
         self._lock = threading.Lock()
         self._state = _State()
+        self._known: dict[str, int] = {}  # last known settings; resolves shared command ids
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -235,6 +236,7 @@ class DeviceSession:
             self.events.on_log("settings dump failed its checksum; ignored")
             return
         settings = thr_v2.decode_dump(dump.payload)
+        self._known = dict(settings)
         for name, value in self._state.written.items():
             if settings.get(name) != value:
                 self.events.on_log(f"amp reports {name}={settings.get(name)}, expected {value}")
@@ -242,6 +244,7 @@ class DeviceSession:
         self.events.on_settings(settings)
 
     def _on_command(self, cmd: ParameterCommand) -> None:
-        decoded = thr_v2.decode_command(cmd.body)
+        decoded = thr_v2.decode_command(cmd.body, self._known)
         if decoded is not None:
+            self._known[decoded[0].name] = decoded[1]
             self.events.on_param(decoded[0].name, decoded[1])

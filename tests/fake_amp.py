@@ -33,7 +33,9 @@ class FakeAmp:
         if data == m.build_settings_request():
             self._outbox.append(self._dump())
         elif not self.ignore_sets:
-            decoded = thr_v2.decode_command(data[len(m.COMMAND_PREFIX) : -1])
+            decoded = thr_v2.decode_command(
+                data[len(m.COMMAND_PREFIX) : -1], thr_v2.decode_dump(bytes(self.payload))
+            )
             assert decoded is not None
             param, value = decoded
             raw = param.dump_bytes(param.to_wire(value))

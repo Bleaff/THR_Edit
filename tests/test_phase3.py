@@ -28,9 +28,23 @@ def test_out_of_range_rejected(name, value):
         thr_v2.build_set_command(name, value)
 
 
-def test_table_offsets_and_ids_unique():
-    assert len({p.command_id for p in thr_v2.PARAMETERS.values()}) == len(thr_v2.PARAMETERS)
-    assert len({p.dump_offset for p in thr_v2.PARAMETERS.values()}) == len(thr_v2.PARAMETERS)
+def _disjoint(a, b):
+    """True if two parameters can never both apply (different value sets of the same type)."""
+    if a.applies_when is None or b.applies_when is None:
+        return False
+    return a.applies_when[0] == b.applies_when[0] and not set(a.applies_when[1]) & set(
+        b.applies_when[1]
+    )
+
+
+def test_table_ids_and_dump_bytes_only_shared_between_disjoint_types():
+    params = list(thr_v2.PARAMETERS.values())
+    for i, a in enumerate(params):
+        for b in params[i + 1 :]:
+            span_a = range(a.dump_offset, a.dump_offset + a.width)
+            span_b = range(b.dump_offset, b.dump_offset + b.width)
+            clash = a.command_id == b.command_id or set(span_a) & set(span_b)
+            assert not clash or _disjoint(a, b), (a.name, b.name)
 
 
 def test_decode_real_dump():
@@ -209,3 +223,87 @@ def test_controller_cab_and_modulation_roundtrip():
         77,
         12,
     )
+
+
+# -- delay cuts and type-dependent reverb parameters (verified on a THR5A) ----------------
+def test_delay_cut_and_reverb_table_entries():
+    p = thr_v2.PARAMETERS
+    expected = {
+        "delay_high_cut": (0x34, 180, 2),
+        "delay_low_cut": (0x36, 182, 2),
+        "reverb_time": (0x41, 193, 2),
+        "reverb_pre": (0x43, 195, 2),
+        "reverb_low_cut": (0x45, 197, 2),
+        "reverb_high_cut": (0x47, 199, 2),
+        "reverb_high_ratio": (0x49, 201, 1),
+        "reverb_low_ratio": (0x4A, 202, 1),
+        "reverb_spring_reverb": (0x41, 193, 1),
+        "reverb_spring_filter": (0x42, 194, 1),
+    }
+    for name, (cid, off, width) in expected.items():
+        assert (p[name].command_id, p[name].dump_offset, p[name].width) == (cid, off, width)
+    # real values read from the amp: delay cuts 4000 / 21 Hz, reverb low ratio 0
+    assert p["reverb_low_ratio"].is_valid_wire(0) and p["delay_low_cut"].is_valid_wire(21)
+    assert thr_v2.build_set_command("delay_high_cut", 8000).hex(" ").upper() == (
+        "F0 43 7D 10 41 30 01 34 3E 40 F7"
+    )  # bytes the amp itself reported for 8000
+
+
+def test_shared_id_0x41_is_resolved_by_reverb_type():
+    body = bytes([0x41, 0x00, 0x28])  # the same wire message either way
+    hall = thr_v2.decode_command(body, {"reverb_type": 0})
+    spring = thr_v2.decode_command(body, {"reverb_type": 3})
+    assert (hall[0].name, hall[1]) == ("reverb_time", 40)
+    assert (spring[0].name, spring[1]) == ("reverb_spring_reverb", 40)
+    assert thr_v2.decode_command(body, {"amp": 1}) is None  # type unknown: do not guess
+    assert thr_v2.decode_command(body) is not None  # allowlist check has no context
+    ensure_allowed_message(m.COMMAND_PREFIX + body + b"\xf7")
+    assert thr_v2.decode_command(bytes([0x42, 0x00, 0x05]), {"reverb_type": 0}) is None
+
+
+def test_dump_decode_only_returns_parameters_for_the_active_reverb_type():
+    payload = bytearray(real_payload())
+    payload[192] = 0
+    hall = thr_v2.decode_dump(bytes(payload))
+    assert "reverb_time" in hall and "reverb_spring_reverb" not in hall
+    payload[192] = 3
+    spring = thr_v2.decode_dump(bytes(payload))
+    assert "reverb_spring_reverb" in spring and "reverb_time" not in spring
+
+
+def test_filter_applicable_drops_values_for_other_or_unknown_types():
+    kept = thr_v2.filter_applicable(
+        {"reverb_type": 0, "reverb_time": 30, "reverb_spring_filter": 50, "gain": 5}
+    )
+    assert kept == {"reverb_type": 0, "reverb_time": 30, "gain": 5}
+    assert thr_v2.filter_applicable({"reverb_time": 30, "gain": 5}) == {"gain": 5}  # no type
+    assert "reverb_spring_filter" in thr_v2.filter_applicable(
+        {"reverb_type": 3, "reverb_spring_filter": 50}
+    )
+
+
+def test_controller_roundtrip_for_hall_and_spring_reverb():
+    amp = FakeAmp(real_payload())
+    ctl = ThrController(amp, settle=0)
+    ctl.set_parameter("reverb_type", 0)
+    for name, v in [
+        ("reverb_time", 150),
+        ("reverb_pre", 900),
+        ("reverb_high_cut", 8000),
+        ("reverb_low_ratio", 0),
+        ("delay_low_cut", 200),
+    ]:
+        assert ctl.set_parameter(name, v).ok
+    s = ctl.read_settings()
+    assert (s["reverb_time"], s["reverb_pre"], s["reverb_high_cut"], s["delay_low_cut"]) == (
+        150,
+        900,
+        8000,
+        200,
+    )
+    ctl.set_parameter("reverb_type", 3)
+    assert ctl.set_parameter("reverb_spring_reverb", 40).ok
+    assert ctl.set_parameter("reverb_spring_filter", 60).ok
+    s = ctl.read_settings()
+    assert (s["reverb_spring_reverb"], s["reverb_spring_filter"]) == (40, 60)
+    assert "reverb_time" not in s

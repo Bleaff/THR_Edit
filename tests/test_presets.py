@@ -238,3 +238,16 @@ def test_apply_order_types_and_cab_before_their_parameters():
     assert order[0] == "amp"
     assert set(order[1:4]) == {"cab", "modulation_type", "reverb_type"}
     assert order.index("modulation_type") < order.index("modulation_p1")
+
+
+def test_presets_never_store_or_apply_values_for_another_reverb_type(manager):
+    p = manager.create("Mixed", {"reverb_type": 0, "reverb_time": 50, "reverb_spring_reverb": 40})
+    assert p.settings == {"reverb_type": 0, "reverb_time": 50}  # spring value dropped on save
+    q = manager.update_settings(
+        p.id, {"reverb_type": 3, "reverb_time": 50, "reverb_spring_filter": 9}
+    )
+    assert q.settings == {"reverb_type": 3, "reverb_spring_filter": 9}
+    # a hand-edited / imported file that includes both is filtered again at apply time
+    sneaky = Preset(name="s", settings={"reverb_type": 0, "reverb_spring_reverb": 40, "gain": 5})
+    assert dict(apply_order(sneaky.settings)) == {"reverb_type": 0, "gain": 5}
+    assert dict(apply_order({"reverb_time": 30, "gain": 5})) == {"gain": 5}  # no type: skip

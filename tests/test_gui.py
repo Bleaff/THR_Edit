@@ -239,7 +239,11 @@ def test_save_updates_active_and_save_as_creates(app, setup):
     win.save_button.click()
     assert win.active.name == "My Tone"
     assert win.manager.get(win.active.id).settings["master"] == 0x33
-    assert set(win.manager.get(win.active.id).settings) == set(win.controls)
+    saved = win.manager.get(win.active.id).settings
+    assert set(saved) == set(win.current_settings())
+    spring_only = {"reverb_spring_reverb", "reverb_spring_filter"}
+    assert not spring_only & set(saved)  # real dump is hall: spring values are not stored
+    assert set(win.controls) - spring_only <= set(saved)
     # with an active preset: Save overwrites its settings
     win.controls["treble"].knob.setValue(11)
     assert win.preset_label.text().endswith("*")
@@ -371,3 +375,34 @@ def test_modulation_knobs_follow_type_and_cab_selector(app, setup):
     win.controls["cab"].setCurrentIndex(5)
     win.controls["cab"].activated.emit(5)
     assert pump(app, lambda: ("cab", 5) in amp.sets)
+
+
+def test_reverb_controls_follow_reverb_type_and_delay_cuts(app, setup):
+    amp = FakeAmp(real_payload())
+    _, win = setup(amp)
+    assert pump(app, lambda: win.controls["master"].value() == 0x33)
+    panel = win.effects_panel
+    amp.inject_event("reverb_type", 0)
+    assert pump(app, lambda: not panel._reverb_full.isHidden() and panel._reverb_spring.isHidden())
+    amp.inject_event("reverb_time", 150)
+    amp.inject_event("delay_high_cut", 8000)
+    assert pump(
+        app,
+        lambda: (
+            win.controls["reverb_time"].value() == 150
+            and win.controls["delay_high_cut"].value() == 8000
+        ),
+    )
+    time.sleep(0.15)
+    app.processEvents()
+    assert amp.sets == []  # following the amp never writes back
+    win.controls["reverb_pre"].setValue(900)
+    assert pump(app, lambda: ("reverb_pre", 900) in amp.sets)
+    amp.inject_event("reverb_type", 3)
+    assert pump(app, lambda: panel._reverb_full.isHidden() and not panel._reverb_spring.isHidden())
+    amp.inject_event("reverb_spring_filter", 66)  # same wire id family as reverb_time
+    assert pump(app, lambda: win.controls["reverb_spring_filter"].value() == 66)
+    assert win.controls["reverb_time"].value() == 150  # hall value untouched by spring events
+    # presets saved while on spring contain only spring values
+    saved = win.current_settings()
+    assert "reverb_spring_reverb" in saved and "reverb_time" not in saved

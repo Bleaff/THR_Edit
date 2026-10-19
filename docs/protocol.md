@@ -144,8 +144,25 @@ Tested on a THR5A with the same write / read-dump / restore method (restore left
   presets are written amp first, then cab and effect types, then everything else. Applying a preset in one fast burst
   (no delays) through the GUI's session path stuck completely, and restoring a snapshot afterwards reproduced the
   original dump exactly. Chorus/phaser/etc. parameters are therefore no longer lost when loading presets.
-- Still unmapped (and reset by the amp when the reverb type changes): reverb time/filter/pre-delay/cuts and delay
-  high/low cut.
+
+## Verified: delay cuts and reverb parameters (type-dependent)
+
+Tested on a THR5A with write / read-dump / restore (restore matched all 35 mapped settings exactly):
+
+- **Delay high cut** (`34`, offsets 180-181) and **low cut** (`36`, 182-183): 14-bit values, accepted. The amp's own
+  values were 4000 and 21, so the unit is assumed to be Hz (the THR10 range is 1000-16001 / 21-8000).
+- **Reverb types 0-2 (hall/room/plate)**: time `41` (193-194), pre-delay `43` (195-196), low cut `45` (197-198),
+  high cut `47` (199-200), all 14-bit; high ratio `49` (201) and low ratio `4A` (202), one byte. All accepted on all
+  three types, each changing exactly its own bytes. Units of time/pre-delay are unverified. The original low ratio
+  was 0, below the THR10 table's minimum of 1, so the minimum is 0.
+- **Spring (type 3)**: id `41` is the same wire message `41 00 <v>` but means "spring reverb amount" and is stored in
+  the single dump byte 193; id `42` is the spring filter (byte 194). The amp's dump layout changes per type, so the
+  app only treats a value as meaningful for its own type (`applies_when`), uses the last known reverb type to decode
+  the amp's own events, and never stores or writes values for another type (a hall preset can not carry spring values).
+- **Switching the reverb type resets** that type's parameters and the reverb level to defaults; presets rewrite them
+  after the type (apply order: amp, then cab/effect types, then the rest).
+- A hardware test applied a spring-reverb preset with new delay cuts and a tremolo modulation type in one burst: all
+  values stuck, and restoring the snapshot reproduced every setting.
 
 ## Documented by reference sources, NOT yet verified on this THR5
 
