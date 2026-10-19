@@ -16,8 +16,18 @@ a = Analysis(  # noqa: F821
     datas=[(str(ROOT / "src/thr_control/data"), "thr_control/data")],
     # mido picks its MIDI backend by name at runtime, so PyInstaller cannot see these imports
     hiddenimports=["mido.backends.rtmidi", "rtmidi", "sounddevice"],
-    excludes=["tkinter", "matplotlib", "scipy", "pandas", "IPython", "pytest"],
+    excludes=[
+        "tkinter", "matplotlib", "scipy", "pandas", "IPython", "pytest",
+        # the app uses only QtCore, QtGui and QtWidgets; these are never imported
+        "PySide6.QtNetwork", "PySide6.QtDBus", "PySide6.QtOpenGL", "PySide6.QtQml",
+        "PySide6.QtQuick", "PySide6.QtPdf", "PySide6.QtWebEngineCore",
+        "numpy.f2py", "numpy.testing", "numpy.distutils",
+    ],
 )
+
+# Qt's own translations are for Qt's built-in dialogs, which the app does not show
+a.datas = [d for d in a.datas if "/translations/" not in d[0].replace("\\", "/")]
+a.datas = [d for d in a.datas if not d[0].replace("\\", "/").startswith("PySide6/Qt/translations")]
 pyz = PYZ(a.pure)  # noqa: F821
 exe = EXE(  # noqa: F821
     pyz,
