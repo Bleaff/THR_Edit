@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from ..protocol.thr_v2 import AMP_NAMES, CAB_NAMES
 from .eq_curve import CAPTION, EqCurve
@@ -48,7 +48,19 @@ class AmplifierPanel(QGroupBox):
         self.eq_curve = EqCurve()
         eq_note = QLabel(CAPTION)
         eq_note.setStyleSheet("color: #8a8a8a; font-size: 11px;")
-        layout.addWidget(self.eq_curve)
+        self.live_button = QPushButton("Measure live")
+        self.live_button.setCheckable(True)
+        self.live_button.setToolTip(
+            "Plot the amp's real response from its USB audio while you play "
+            "(dry input vs processed output)."
+        )
+        self.live_status = QLabel("")
+        self.live_status.setStyleSheet("color: #6ec1ff; font-size: 11px;")
+        live_row = QHBoxLayout()
+        live_row.addWidget(self.live_button)
+        live_row.addWidget(self.live_status, 1)
+        layout.addWidget(self.eq_curve, 1)
+        layout.addLayout(live_row)
         layout.addWidget(eq_note)
         layout.addWidget(note)
 

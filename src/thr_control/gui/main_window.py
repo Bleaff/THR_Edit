@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtGui import QCloseEvent
@@ -20,11 +21,13 @@ from PySide6.QtWidgets import (
 from ..domain.presets import Preset, apply_order
 from ..midi.discovery import list_input_ports, list_output_ports
 from ..protocol.thr_v2 import filter_applicable
+from ..services.live import LiveStream
 from ..services.preset_manager import PresetError, PresetManager
 from .amplifier_panel import AmplifierPanel
 from .bridge import SessionBridge
 from .diagnostics_view import DiagnosticsView
 from .effects_panel import EffectsPanel
+from .live_meter import LiveMeter, default_stream_factory
 from .preset_browser import PresetBrowser, Prompts
 
 AUTO = "Auto-detect"
@@ -36,6 +39,7 @@ class MainWindow(QMainWindow):
         bridge: SessionBridge,
         manager: PresetManager,
         prompts: Prompts | None = None,
+        live_factory: Callable[[], LiveStream] | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("THR Control")
@@ -49,6 +53,12 @@ class MainWindow(QMainWindow):
         self.amp_panel = AmplifierPanel()
         self.effects_panel = EffectsPanel()
         self.diagnostics = DiagnosticsView(list_input_ports, list_output_ports)
+        self.live_meter = LiveMeter(
+            self.amp_panel.eq_curve,
+            self.amp_panel.live_status,
+            live_factory or default_stream_factory,
+        )
+        self.amp_panel.live_button.toggled.connect(self._on_live_toggled)
 
         self.controls: dict[str, Any] = {}
         for control in [*self.amp_panel.controls(), *self.effects_panel.controls()]:
@@ -256,6 +266,16 @@ class MainWindow(QMainWindow):
         text = self.port_combo.itemText(index)
         self.bridge.set_port(None if text == AUTO else text)
 
+    def _on_live_toggled(self, on: bool) -> None:
+        if on:
+            if not self.live_meter.start():
+                self.amp_panel.live_button.blockSignals(True)
+                self.amp_panel.live_button.setChecked(False)
+                self.amp_panel.live_button.blockSignals(False)
+        else:
+            self.live_meter.stop()
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        self.live_meter.stop()
         self.bridge.stop()
         super().closeEvent(event)

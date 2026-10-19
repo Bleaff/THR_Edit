@@ -95,4 +95,9 @@ Cover: message encode/decode, protocol parsing, discovery logic, parameter valid
   and never write a value for a type other than the active one.
 - Hardware test scripts: print with `flush=True`, arm `faulthandler.dump_traceback_later`, and never use `pkill -f` with a
   pattern that appears in your own command line.
+- Audio goes through `services/audio.py` (a facade over `audio_pipewire.py` and `audio_portaudio.py`); call `audio.list_nodes`,
+  `audio.record`, `audio.open_capture` and never `pw-*` or `sounddevice` directly. A device can be both an input and an output
+  with the same id, so always match nodes by id *and* kind. PortAudio on Linux often fails on a USB device that PipeWire owns
+  (`Invalid sample rate`); PipeWire is the Linux default. The PortAudio backend is only tested with a stand-in for
+  `sounddevice` until someone runs it on a Mac (`docs/macos-testing.md`).
 

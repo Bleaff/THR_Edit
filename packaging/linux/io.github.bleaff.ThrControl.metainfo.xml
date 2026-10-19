@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.bleaff.ThrControl</id>
+  <name>THR Control</name>
+  <summary>Unofficial editor for Yamaha THR guitar amplifiers</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <developer id="io.github.bleaff">
+    <name>Bleaff</name>
+  </developer>
+  <description>
+    <p>
+      THR Control edits Yamaha THR guitar amplifiers (first generation, tested on a THR5 with THR5 V2
+      firmware) over USB, without the official editor.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Live two-way control of amp model, gain, master, EQ, cabinet and all effects</li>
+      <li>A preset library with search, genres, favorites, notes, import and export</li>
+      <li>Tempo-synced delay, a live frequency-response plot and a recorder that saves dry and processed tracks</li>
+      <li>Safe by design: the app never sends firmware or bootloader commands</li>
+    </ul>
+    <p>This is an independent project. Yamaha and THR are trademarks of their owner.</p>
+  </description>
+  <launchable type="desktop-id">io.github.bleaff.ThrControl.desktop</launchable>
+  <provides>
+    <binary>thr-control-gui</binary>
+    <binary>thr-control</binary>
+  </provides>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Midi</category>
+  </categories>
+  <keywords>
+    <keyword>Yamaha</keyword>
+    <keyword>THR</keyword>
+    <keyword>guitar</keyword>
+    <keyword>amplifier</keyword>
+    <keyword>MIDI</keyword>
+  </keywords>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <releases>
+    <release version="0.1.0" date="2026-10-19">
+      <description>
+        <p>First release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

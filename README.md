@@ -1,17 +1,60 @@
 # THR Control
 
-Open-source Linux controller for Yamaha THR amplifiers over USB-MIDI (target: THR5 V2 / cross-flashed THR5A). See `roadmap.md` and `AGENTS.md`.
+An **unofficial** editor for first-generation Yamaha THR guitar amplifiers (THR5, THR5A, THR10 family; developed and tested on a
+THR5A running THR5 V2 firmware). Control the amp from your computer over USB: amp model, gain, master, EQ, cabinet and every effect,
+with a preset library, tempo-synced delay, a live frequency-response plot and a recorder that saves the dry and the processed
+guitar at the same time. No Wine and no official editor needed.
 
-**Status: Phase 5 (preset management) plus tempo-synced delay, EQ curve and preset notes; delay (time, cuts), reverb (all types), noise gate, compressor, cabinet and modulation parameters are mapped.** `probe`, `decode`, `diff` are receive-only; `read`, `map`, `show` send only the settings request; `set` sends one validated parameter command and only with `--yes`. The transport allowlist permits nothing else, and firmware/bootloader commands (`DTA1ERASE`, `DTA1MAIN`, `DTA1ROMR`) are blocked by `protocol/safety.py`.
+*Yamaha and THR are trademarks of their owner. This project is independent and is not affiliated with or endorsed by Yamaha.*
 
-## Install (Manjaro / Arch)
+**Safe by design:** the app only ever sends the amp's settings request and validated parameter changes. Firmware, erase and
+bootloader commands (`DTA1ERASE`, `DTA1MAIN`, `DTA1ROMR`) are blocked in code and covered by tests.
+
+## Install
+
+You need Python 3.12 or newer. THR Control is **not on PyPI yet**; until the first public release, install it from a
+checkout of the source (this works today and was verified in a clean environment):
 
 ```sh
-sudo pacman -S --needed alsa-lib alsa-utils uv base-devel
-uv sync
+git clone <repository-url> thr-control && cd thr-control
+pipx install .                    # or: uv tool install .
+thr-control doctor                # checks everything and tells you what to fix
+thr-control install-desktop       # adds "THR Control" to your application menu (Linux)
+thr-control-gui                   # or just start it from the menu
 ```
 
-`python-rtmidi` builds against `alsa-lib` if no wheel is available for your Python version. Your user must be able to access `/dev/snd/seq` (normally the `audio` group is not required on Manjaro).
+After the first release this becomes `pipx install thr-control`; Flatpak, AUR and macOS packages are planned.
+
+Plug the amp in with its USB cable and switch it on. If something is missing, `thr-control doctor` explains it in plain
+words (for example: "add yourself to the audio group" or "install the PipeWire tools").
+
+| Platform | Status |
+| --- | --- |
+| **Linux** (tested on Manjaro) | Supported: MIDI control, presets, GUI, recording, live measurement. Needs the ALSA library; recording and live measurement also need the PipeWire tools (`pw-record`, `pw-play`, `pw-dump`) |
+| **macOS** | MIDI control, presets and the GUI should work (CoreMIDI), and recording and live measurement use PortAudio, but **none of it has been tested on a Mac yet**: see `docs/macos-testing.md` |
+| **Windows** | Not supported (the THR needs a Yamaha driver there) |
+
+**Audio backends.** Recording and live measurement use PipeWire's command-line tools on Linux and PortAudio (`sounddevice`) on
+macOS. Force one with `--audio-backend pipewire|portaudio` or `THR_AUDIO_BACKEND`. On Linux PortAudio is only a fallback: it
+often cannot open a USB device that PipeWire already owns. On macOS the first recording asks for microphone permission; allow it,
+otherwise the input is silent.
+
+### From source (developers)
+
+```sh
+sudo pacman -S --needed alsa-lib alsa-utils uv    # Arch / Manjaro; use your distribution's equivalents
+uv sync
+uv run thr-control doctor
+uv run pytest
+```
+
+## License
+
+GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`); see `LICENSE`. Protocol facts were learned from the
+reference projects listed in `docs/protocol.md`; no code was copied from them.
+
+Files are kept in the platform's standard folders: on Linux `~/.local/share/thr-control` (presets, measurements) and your Music
+folder (recorded takes).
 
 ## Usage
 
@@ -95,6 +138,21 @@ preset, or asks for a name if none is active.
 
 CLI: `thr-control presets list [--query blues] [--favorites]`, `presets apply "Warm Jazz" [--yes]`,
 `presets save "Name"` (reads the amp), `presets export FILE`, `presets import FILE`, `--library DIR` to use another folder.
+
+## Live response curve
+
+While you play, the app can estimate the amp's frequency response in real time from its USB audio, with no cable or test
+tone: it compares the dry input (channels 3+4) with the processed output (channels 1+2), as spectrum over spectrum,
+averaged over a few seconds. In the GUI press **Measure live** under the EQ curve; the measured curve is drawn in blue over
+the dimmed illustrative model, and it moves as you change bass / middle / treble, the amp model or the cabinet. In a
+terminal: `uv run thr-control audio live --seconds 30`.
+
+- Play continuously for a few seconds (chords and notes across the neck): the app first finds the amp's latency (about 1.2
+  ms) from your playing, then needs about two seconds of averaging before it shows anything.
+- Only bands where the two signals are clearly related (coherence 0.6 or more) and the guitar actually has energy are
+  drawn; everything else is left blank rather than guessed. Heavy distortion (high gain) lowers coherence, especially in
+  the highs, and reverb or delay tails are not part of a simple response, so use a clean or low-gain tone for the cleanest
+  curve. The curve is a *shape* (0 dB at 1 kHz), not an absolute level.
 
 ## Recording takes
 

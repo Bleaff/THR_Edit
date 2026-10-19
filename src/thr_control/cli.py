@@ -16,8 +16,9 @@ from pathlib import Path
 from typing import TextIO
 
 import numpy as np
+import platformdirs
 
-from . import __version__
+from . import __version__, paths
 from .domain import eq as eq_domain
 from .domain import measure
 from .domain.presets import Preset
@@ -27,7 +28,7 @@ from .midi.monitor import CapturedMessage, MidiMonitor, format_hex, format_messa
 from .midi.transport import RequestTransport
 from .protocol import messages, thr_v2
 from .protocol.parser import SettingsDump, describe, parse
-from .services import audio
+from .services import audio, desktop, doctor
 from .services.capture import diff_payloads, format_changes, run_mapping
 from .services.controller import DeviceError, ThrController, apply_preset
 from .services.preset_manager import PresetError, PresetManager
@@ -465,6 +466,7 @@ def cmd_audio(args: argparse.Namespace, out: TextIO | None = None) -> int:
     """USB-audio tools: list the amp's audio nodes, or probe the capture channels."""
     out = out or sys.stdout
     try:
+        audio.use_backend(args.audio_backend)
         nodes = audio.list_nodes()
     except audio.AudioError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -472,19 +474,23 @@ def cmd_audio(args: argparse.Namespace, out: TextIO | None = None) -> int:
     sink, source = audio.find_thr(nodes)
     if args.action == "show":
         return _show_measurement(args, out)
-    by_id = {n.id: n for n in nodes}
-    if args.sink is not None:
-        sink = by_id.get(args.sink)
-        if sink is None or sink.kind != "sink":
-            print(f"error: no output node with id {args.sink}", file=sys.stderr)
-            return 1
-    if args.source is not None:
-        source = by_id.get(args.source)
-        if source is None or source.kind != "source":
-            print(f"error: no input node with id {args.source}", file=sys.stderr)
-            return 1
+
+    def pick(node_id: int | None, kind: str, current: audio.Node | None) -> audio.Node | None:
+        if node_id is None:
+            return current
+        # a duplex device appears twice (as sink and as source), so match the kind too
+        return next((n for n in nodes if n.id == node_id and n.kind == kind), None)
+
+    if args.sink is not None and (sink := pick(args.sink, "sink", sink)) is None:
+        print(f"error: no output device with id {args.sink}", file=sys.stderr)
+        return 1
+    if args.source is not None and (source := pick(args.source, "source", source)) is None:
+        print(f"error: no input device with id {args.source}", file=sys.stderr)
+        return 1
     if args.action == "record":
         return _record(args, source, out)
+    if args.action == "live":
+        return _live(args, source, out)
     if args.action == "devices":
         for n in nodes:
             mark = "  <- THR" if n in (sink, source) else ""
@@ -539,7 +545,7 @@ def _record(args: argparse.Namespace, source: audio.Node | None, out: TextIO) ->
     if not 0 < args.seconds <= 3600:
         print("error: --seconds must be between 0 and 3600", file=sys.stderr)
         return 1
-    directory = Path(args.take_dir) if args.take_dir else Path.home() / "Music" / "thr-control"
+    directory = Path(args.take_dir) if args.take_dir else paths.takes_dir()
     directory.mkdir(parents=True, exist_ok=True)
     base = directory / f"{time.strftime('%Y%m%d-%H%M%S')}-{audio.sanitize_name(args.name)}"
     raw_path = base.with_name(base.name + "-raw.wav")
@@ -605,6 +611,54 @@ def _record(args: argparse.Namespace, source: audio.Node | None, out: TextIO) ->
         encoding="utf-8",
     )
     print(f"Amp settings saved to {sidecar.name}", file=out)
+    return 0
+
+
+def _live(args: argparse.Namespace, source: audio.Node | None, out: TextIO) -> int:
+    """Print the live amp response once a second while you play (text version of the GUI curve)."""
+    from .services.live import LiveStream
+
+    if source is None:
+        print(
+            "error: the THR's USB audio is not available (is the amp connected?)", file=sys.stderr
+        )
+        return 1
+    stream = LiveStream(source)
+    stream.start()
+    print(
+        f"Listening to {source.description} for {args.seconds:g} s. Play your guitar "
+        "(Ctrl+C stops). Gains are relative to 1 kHz; '--' means not trusted.",
+        file=out,
+    )
+    header = " ".join(f"{f / 1000:>4g}k" if f >= 1000 else f"{f:>5g}" for f in FREQ_TABLE)
+    print(f"  {'status':<19} dry/wet dBFS   lag  | {header} Hz", file=out)
+    deadline = time.monotonic() + args.seconds
+    try:
+        while time.monotonic() < deadline:
+            time.sleep(1.0)
+            snap = stream.snapshot()
+            if snap.status == "error":
+                print(f"error: {snap.error}", file=sys.stderr)
+                return 1
+            cells = []
+            if (res := snap.result) is not None:
+                norm = res.normalised()
+                for f in FREQ_TABLE:
+                    k = min(range(len(res.freqs)), key=lambda i: abs(res.freqs[i] - f))
+                    cells.append(f"{norm[k]:+5.1f}" if res.valid[k] else "   --")
+            lag = f"{snap.lag_samples / 48:.1f}ms" if snap.lag_samples is not None else "  n/a"
+            print(
+                f"  {snap.status:<19} {snap.dry_dbfs:6.1f}/{snap.wet_dbfs:6.1f} {lag:>6} | "
+                + " ".join(cells or ["   --"] * len(FREQ_TABLE)),
+                file=out,
+                flush=True,
+            )
+            if snap.status == "ended":
+                break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stream.stop()
     return 0
 
 
@@ -726,6 +780,54 @@ def _show_measurement(args: argparse.Namespace, out: TextIO) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace, out: TextIO | None = None) -> int:
+    """Check the environment and explain, in plain words, what to fix."""
+    out = out or sys.stdout
+    marks = {doctor.OK: "OK  ", doctor.WARN: "WARN", doctor.FAIL: "FAIL"}
+    checks = doctor.run_checks()
+    for c in checks:
+        print(f"[{marks[c.status]}] {c.name}: {c.detail}", file=out)
+        if c.hint and c.status != doctor.OK:
+            print(f"       -> {c.hint}", file=out)
+    failures, warnings = doctor.summarise(checks)
+    print(
+        "\nEverything needed is in place."
+        if not failures and not warnings
+        else f"\n{failures} problem(s), {warnings} warning(s).",
+        file=out,
+    )
+    return 1 if failures else 0
+
+
+def cmd_install_desktop(args: argparse.Namespace, out: TextIO | None = None) -> int:
+    """Add (or remove) THR Control in the application menu of the current user (Linux)."""
+    out = out or sys.stdout
+    if not sys.platform.startswith("linux"):
+        print(
+            "error: this command creates a Linux menu entry; on macOS use the .app bundle.",
+            file=sys.stderr,
+        )
+        return 1
+    data_home = Path(platformdirs.user_data_dir())  # ~/.local/share (honours $XDG_DATA_HOME)
+    if args.remove:
+        removed = desktop.remove(data_home)
+        print(
+            "Removed: " + (", ".join(str(p) for p in removed) or "nothing was installed"), file=out
+        )
+        desktop.refresh_caches(data_home)
+        return 0
+    try:
+        created = desktop.install(data_home, desktop.launcher_command())
+    except desktop.DesktopError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    desktop.refresh_caches(data_home)
+    for path in created:
+        print(f"Wrote {path}", file=out)
+    print("THR Control now appears in your application menu.", file=out)
+    return 0
+
+
 def cmd_gui(args: argparse.Namespace, out: TextIO | None = None) -> int:
     from .gui.app import run
 
@@ -791,11 +893,17 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--yes", action="store_true", help="actually transmit")
     sync.set_defaults(func=cmd_delay_sync)
     aud = sub.add_parser("audio", help="USB-audio tools for measuring the amp")
-    aud.add_argument("action", choices=["devices", "probe", "measure", "show", "record"])
+    aud.add_argument("action", choices=["devices", "probe", "measure", "show", "record", "live"])
     aud.add_argument("--seconds", type=float, default=10.0, help="record: take length")
     aud.add_argument("--name", default="take", help="record: file name prefix")
     aud.add_argument("--take-dir", help="record: where to save (default: ~/Music/thr-control)")
     aud.add_argument("file", nargs="?", help="show: measurement file")
+    aud.add_argument(
+        "--audio-backend",
+        choices=["auto", "pipewire", "portaudio"],
+        default="auto",
+        help="auto: PipeWire tools on Linux, PortAudio elsewhere",
+    )
     aud.add_argument("--sink", type=int, help="PipeWire id of the output to play on (default: THR)")
     aud.add_argument("--source", type=int, help="PipeWire id of the input to record (default: THR)")
     aud.add_argument("--dir", help="measurement directory (default: ~/.local/share/thr-control)")
@@ -803,6 +911,12 @@ def build_parser() -> argparse.ArgumentParser:
     aud.add_argument("--duration", type=float, default=3.0, help="sweep length in seconds")
     aud.add_argument("--yes", action="store_true", help="probe: actually play the sweep")
     aud.set_defaults(func=cmd_audio)
+    sub.add_parser("doctor", help="check the environment and explain what to fix").set_defaults(
+        func=cmd_doctor
+    )
+    inst = sub.add_parser("install-desktop", help="add THR Control to the application menu (Linux)")
+    inst.add_argument("--remove", action="store_true", help="remove it again")
+    inst.set_defaults(func=cmd_install_desktop)
     sub.add_parser("gui", help="launch the desktop application").set_defaults(func=cmd_gui)
     return parser
 

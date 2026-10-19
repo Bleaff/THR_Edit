@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .. import paths
+
 
 def default_directory() -> Path:
-    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(base) / "thr-control" / "measurements"
+    return paths.measurements_dir()
 
 
 @dataclass

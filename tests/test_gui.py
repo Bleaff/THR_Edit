@@ -178,6 +178,7 @@ def test_window_renders(app, setup, tmp_path):
 
 # -- presets ---------------------------------------------------------------
 import json  # noqa: E402
+import math  # noqa: E402
 from importlib import resources  # noqa: E402
 
 STARTERS = json.loads(
@@ -472,3 +473,164 @@ def test_preset_notes_are_edited_saved_searchable_and_shown(app, setup):
     select(win, "Funk Clean")
     assert win.manager.get(preset.id).notes == "edited, then switched away"
     assert "Tight" in b.notes.toPlainText()
+
+
+# -- live measurement ----------------------------------------------------------------------------
+from thr_control.domain import eq as eq_domain  # noqa: E402
+from thr_control.domain.live import LiveResult  # noqa: E402
+from thr_control.services.live import LiveSnapshot  # noqa: E402
+
+LIVE_FREQS = eq_domain.log_frequencies(120)
+
+
+class ScriptedStream:
+    """Stands in for LiveStream: returns whatever snapshot the test sets."""
+
+    def __init__(self):
+        self.started = self.stopped = False
+        self.current = LiveSnapshot("waiting for signal", None, None, -90.0, -90.0, None)
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
+
+    def snapshot(self):
+        return self.current
+
+
+def live_result(valid_from=0, valid_to=None):
+    n = len(LIVE_FREQS)
+    valid = [valid_from <= i < (valid_to or n) for i in range(n)]
+    db = [6.0 if f < 300 else 0.0 for f in LIVE_FREQS]
+    return LiveResult(LIVE_FREQS, db, [0.95] * n, valid, 100)
+
+
+def test_live_button_shows_status_and_overlays_only_trusted_points(app, setup, tmp_path):
+    stream = ScriptedStream()
+    _, win = setup(None)
+    win.live_meter._factory = lambda: stream
+    panel, curve = win.amp_panel, win.amp_panel.eq_curve
+    panel.live_button.setChecked(True)
+    assert stream.started and win.live_meter.running
+    win.live_meter.update_now()
+    assert "Play your guitar" in panel.live_status.text() and curve.measured() is None
+    stream.current = LiveSnapshot("calibrating", None, None, -30.0, -28.0, None)
+    win.live_meter.update_now()
+    assert "latency" in panel.live_status.text()
+    stream.current = LiveSnapshot("measuring", None, live_result(valid_to=3), -30.0, -28.0, 569)
+    win.live_meter.update_now()
+    assert curve.measured() is None and "not enough signal" in panel.live_status.text()
+    stream.current = LiveSnapshot(
+        "measuring", None, live_result(valid_from=20, valid_to=100), -30, -28, 569
+    )
+    win.live_meter.update_now()
+    freqs, db, valid = curve.measured()
+    assert sum(valid) == 80 and "80 of 120 bands trusted" in panel.live_status.text()
+    assert "11.9 ms" in panel.live_status.text()  # 569 samples at 48 kHz
+    assert win.grab().save(str(tmp_path / "live.png"))  # painting with the overlay works
+    panel.live_button.setChecked(False)
+    assert stream.stopped and curve.measured() is None and panel.live_status.text() == ""
+    assert not win.live_meter.running
+
+
+def test_live_reports_errors_and_unavailable_audio(app, setup):
+    from thr_control.services.audio import AudioError
+
+    _, win = setup(None)
+
+    def unavailable():
+        raise AudioError("the THR's USB audio is not available")
+
+    win.live_meter._factory = unavailable
+    win.amp_panel.live_button.setChecked(True)
+    assert not win.amp_panel.live_button.isChecked()  # switches itself back off
+    assert "unavailable" in win.amp_panel.live_status.text()
+    stream = ScriptedStream()
+    win.live_meter._factory = lambda: stream
+    win.amp_panel.live_button.setChecked(True)
+    stream.current = LiveSnapshot("error", "pipe closed", None, -90.0, -90.0, None)
+    win.live_meter.update_now()
+    assert "failed: pipe closed" in win.amp_panel.live_status.text()
+    stream.current = LiveSnapshot("ended", None, None, -90.0, -90.0, None)
+    win.live_meter.update_now()
+    assert "ended" in win.amp_panel.live_status.text()
+
+
+def test_closing_the_window_stops_a_running_live_stream(app, setup):
+    stream = ScriptedStream()
+    _, win = setup(None)
+    win.live_meter._factory = lambda: stream
+    win.amp_panel.live_button.setChecked(True)
+    win.close()
+    assert stream.stopped
+
+
+# -- the plot itself -----------------------------------------------------------------------------
+from PySide6.QtCore import QPointF  # noqa: E402
+
+from thr_control.gui import eq_curve  # noqa: E402
+
+
+def test_pick_range_grows_at_once_and_shrinks_only_when_well_below():
+    assert eq_curve.pick_range(8.0, 12.0) == 12.0  # fits, but not far enough below to shrink
+    assert eq_curve.pick_range(5.0, 12.0) == 6.0  # well below 55% of the range: shrink
+    assert eq_curve.pick_range(13.0, 12.0) == 18.0  # needs more: grow immediately
+    assert eq_curve.pick_range(40.0, 12.0) == 36.0  # capped at the largest step
+    assert eq_curve.pick_range(3.0, 18.0) == 6.0  # far below: shrink to the smallest fit
+    assert eq_curve.pick_range(10.0, 18.0) == 18.0  # 10 > 55% of 18: keep, avoid flicker
+    steps = eq_curve.RANGE_STEPS
+    assert list(steps) == sorted(steps) and steps[0] <= 6
+
+
+def test_smooth_path_passes_through_its_points():
+    pts = [QPointF(0, 0), QPointF(10, 8), QPointF(20, -4), QPointF(30, 2)]
+    path = eq_curve.smooth_points(pts)
+    assert path.elementCount() == 1 + 3 * 3  # moveTo + a cubic (3 elements) per segment
+    ends = [(path.elementAt(i).x, path.elementAt(i).y) for i in range(3, path.elementCount(), 3)]
+    assert ends == [(10.0, 8.0), (20.0, -4.0), (30.0, 2.0)]
+    assert eq_curve.smooth_points([]).elementCount() == 0
+
+
+def test_plot_geometry_roundtrips_and_the_scale_adapts_to_data(app):
+    curve = eq_curve.EqCurve()
+    curve.resize(700, 300)
+    rect = curve.plot_rect()
+    for f in (20, 100, 1000, 20000):
+        assert curve.freq_at(curve.x_for(f, rect), rect) == pytest.approx(f, rel=1e-6)
+    assert curve.db_at(curve.y_for(0, rect), rect) == pytest.approx(0, abs=1e-9)
+    assert curve.height() > 0 and curve.minimumHeight() >= 240  # a large plot
+    flat_range = curve.half_range()
+    curve.set_values(100, 50, 100)  # +12 dB shelves: the model alone needs more room
+    assert curve.half_range() > flat_range or curve.half_range() >= 12
+    n = 60
+    freqs = eq_domain.log_frequencies(n)
+    big = [30.0] * n
+    curve.set_measured(freqs, big, [True] * n)
+    assert curve.half_range() == 36.0  # +30 dB measured: the scale grows to fit
+    curve.set_measured(freqs, big, [False] * n)  # nothing trusted: the data no longer counts
+    curve.set_values(50, 50, 50)
+    assert curve.half_range() < 36.0
+    curve.clear_measured()
+    assert curve.measured() is None
+
+
+def test_plot_paints_every_state_without_error(app, tmp_path):
+    curve = eq_curve.EqCurve()
+    curve.resize(760, 320)
+    freqs = eq_domain.log_frequencies(120)
+    db = [6 * math.sin(i / 9) for i in range(120)]
+    valid = [8 <= i < 50 or 62 <= i < 110 for i in range(120)]
+    coherence = [0.95 if v else 0.3 for v in valid]
+    for i, state in enumerate(("model", "measured", "measured+coherence", "hover", "disabled")):
+        if state == "measured":
+            curve.set_measured(freqs, db, valid)
+        if state == "measured+coherence":
+            curve.set_measured(freqs, db, valid, coherence)
+        if state == "hover":
+            rect = curve.plot_rect()
+            curve._hover = QPointF(rect.center().x(), rect.center().y())
+        if state == "disabled":
+            curve.setEnabled(False)
+        assert curve.grab().save(str(tmp_path / f"{i}-{state}.png"))

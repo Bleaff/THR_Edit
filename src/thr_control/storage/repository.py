@@ -11,14 +11,14 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from .. import paths
 from ..domain.presets import Preset
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def default_directory() -> Path:
-    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(base) / "thr-control" / "presets"
+    return paths.presets_dir()
 
 
 class PresetRepository:

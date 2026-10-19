@@ -1,79 +1,116 @@
-"""Play a sweep and record the amp's USB audio through PipeWire (pw-play / pw-record).
+"""Audio facade: picks a backend and holds the analysis helpers.
 
-Using the PipeWire command-line tools keeps this free of audio libraries and works while the
-desktop session already owns the device. Everything is explicit about which device it plays to
-and which channels it records, and plays at a clamped, quiet level (see ``measure.HARD_MAX_DBFS``).
+Backends: PipeWire command-line tools (Linux) or PortAudio through ``sounddevice`` (macOS,
+Windows, or Linux without the PipeWire tools). ``THR_AUDIO_BACKEND=pipewire|portaudio`` or
+:func:`use_backend` overrides the automatic choice. The play/record functions are plain
+module-level functions so callers (and tests) can use or replace them without caring which
+backend is active.
 """
 
 from __future__ import annotations
 
+import os
 import re
-import subprocess
-import tempfile
-import time
-import wave
+import shutil
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from ..domain import measure
+from .audio_core import (
+    RECORD_CHANNELS,
+    THR_SINK_HINT,
+    AudioBackend,
+    AudioError,
+    BlockSource,
+    Node,
+    read_wav,
+    write_pcm24,
+    write_pcm32,
+    write_wav,
+)
+from .audio_pipewire import PipeWireBackend, parse_nodes
 
-THR_SINK_HINT = "THR"
-RECORD_CHANNELS = 4  # the THR5's USB capture exposes four channels
+__all__ = [
+    "ACTIVE_DBFS",
+    "CLIP_DBFS",
+    "RECORD_CHANNELS",
+    "THR_SINK_HINT",
+    "AudioBackend",
+    "AudioError",
+    "BlockSource",
+    "ChannelLevel",
+    "ChannelReport",
+    "Node",
+    "PipeWireBackend",
+    "analyse_channels",
+    "choose_backend",
+    "correlation",
+    "find_thr",
+    "get_backend",
+    "is_dual_mono",
+    "level_report",
+    "list_nodes",
+    "open_capture",
+    "pair_relation",
+    "parse_nodes",
+    "play_and_record",
+    "read_wav",
+    "record",
+    "sanitize_name",
+    "spectral_centroid",
+    "use_backend",
+    "write_pcm24",
+    "write_pcm32",
+    "write_wav",
+]
+
+_backend: AudioBackend | None = None
+
+PIPEWIRE_TOOLS = ("pw-record", "pw-play", "pw-dump")
 
 
-class AudioError(Exception):
-    pass
+def choose_backend(
+    preferred: str | None = None,
+    platform: str | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+) -> AudioBackend:
+    """The backend to use: *preferred* (or ``$THR_AUDIO_BACKEND``), else by platform."""
+    platform = platform or sys.platform
+    wanted = (preferred or os.environ.get("THR_AUDIO_BACKEND") or "auto").lower()
+    if wanted not in ("auto", "pipewire", "portaudio"):
+        raise AudioError(f"unknown audio backend {wanted!r} (use pipewire or portaudio)")
+    if wanted == "pipewire":
+        return PipeWireBackend()
+    if wanted == "portaudio":
+        from .audio_portaudio import PortAudioBackend
+
+        return PortAudioBackend()
+    if platform.startswith("linux") and all(which(t) for t in PIPEWIRE_TOOLS):
+        return PipeWireBackend()
+    from .audio_portaudio import PortAudioBackend
+
+    return PortAudioBackend()
 
 
-@dataclass(frozen=True)
-class Node:
-    id: int
-    name: str  # node.name, usable with --target
-    description: str
-    kind: str  # "sink" or "source"
+def get_backend() -> AudioBackend:
+    global _backend
+    if _backend is None:
+        _backend = choose_backend()
+    return _backend
 
 
-def _run(cmd: list[str], timeout: float = 15) -> str:
-    try:
-        return subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=True
-        ).stdout
-    except FileNotFoundError as exc:
-        raise AudioError(f"{cmd[0]} not found; PipeWire tools are required") from exc
-    except subprocess.CalledProcessError as exc:
-        raise AudioError(f"{' '.join(cmd)} failed: {exc.stderr.strip() or exc.returncode}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise AudioError(f"{cmd[0]} timed out") from exc
-
-
-def parse_nodes(pw_dump_text: str) -> list[Node]:
-    """Extract audio sinks and sources from ``pw-dump`` JSON."""
-    import json
-
-    nodes: list[Node] = []
-    for obj in json.loads(pw_dump_text):
-        props = (obj.get("info") or {}).get("props") or {}
-        media = props.get("media.class", "")
-        if obj.get("type") != "PipeWire:Interface:Node" or media not in (
-            "Audio/Sink",
-            "Audio/Source",
-        ):
-            continue
-        nodes.append(
-            Node(
-                int(obj["id"]),
-                str(props.get("node.name", "")),
-                str(props.get("node.description", props.get("node.name", ""))),
-                "sink" if media == "Audio/Sink" else "source",
-            )
-        )
-    return nodes
+def use_backend(name: str | None) -> None:
+    """Select a backend explicitly ("auto"/None re-runs the automatic choice)."""
+    global _backend
+    _backend = None if name in (None, "auto") else choose_backend(name)
 
 
 def list_nodes() -> list[Node]:
-    return parse_nodes(_run(["pw-dump"]))
+    return get_backend().list_nodes()
 
 
 def find_thr(nodes: list[Node]) -> tuple[Node | None, Node | None]:
@@ -81,47 +118,6 @@ def find_thr(nodes: list[Node]) -> tuple[Node | None, Node | None]:
     sink = next((n for n in nodes if n.kind == "sink" and THR_SINK_HINT in n.description), None)
     source = next((n for n in nodes if n.kind == "source" and THR_SINK_HINT in n.description), None)
     return sink, source
-
-
-def write_wav(path: Path, samples: np.ndarray, fs: int, channels: int = 2) -> None:
-    pcm = np.clip(np.round(samples * 2147483648.0), -2147483648, 2147483647).astype("<i4")
-    frames = np.repeat(pcm[:, None], channels, axis=1)
-    with wave.open(str(path), "wb") as w:
-        w.setnchannels(channels)
-        w.setsampwidth(4)
-        w.setframerate(fs)
-        w.writeframes(frames.tobytes())
-
-
-def write_pcm24(path: Path, samples: np.ndarray, fs: int) -> None:
-    """Write [frames, channels] floats (-1..1) as a 24-bit PCM WAV."""
-    # Round (not truncate) and use the same scale the reader divides by: error <= half a step.
-    pcm = np.clip(np.round(samples * 8388608.0), -8388608, 8388607).astype("<i4")
-    raw = pcm.view(np.uint8).reshape(-1, 4)[:, :3]  # keep the low 3 bytes (little endian)
-    with wave.open(str(path), "wb") as w:
-        w.setnchannels(samples.shape[1])
-        w.setsampwidth(3)
-        w.setframerate(fs)
-        w.writeframes(raw.tobytes())
-
-
-def read_wav(path: Path) -> tuple[np.ndarray, int]:
-    """Return (samples shaped [frames, channels] in -1..1, sample rate); 16/24/32-bit PCM."""
-    with wave.open(str(path), "rb") as w:
-        width, channels = w.getsampwidth(), w.getnchannels()
-        raw = w.readframes(w.getnframes())
-        rate = w.getframerate()
-    if width == 4:
-        data = np.frombuffer(raw, dtype="<i4") / 2147483648.0
-    elif width == 3:
-        b = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 3).astype(np.int32)
-        value = b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16)
-        data = np.where(value >= 1 << 23, value - (1 << 24), value) / 8388608.0
-    elif width == 2:
-        data = np.frombuffer(raw, dtype="<i2") / 32768.0
-    else:
-        raise AudioError(f"unexpected sample width {width}")
-    return data.reshape(-1, channels), rate
 
 
 def play_and_record(
@@ -133,47 +129,25 @@ def play_and_record(
     lead: float = 0.6,
     tail: float = 1.5,
 ) -> np.ndarray:
-    """Play *sweep* on *sink* while recording *source*; returns [frames, channels].
+    """Play *sweep* on *sink* while recording *source*; returns [frames, channels]."""
+    return get_backend().play_and_record(sweep, sink, source, fs, channels, lead, tail)
 
-    Recording starts first and ends after a tail, so the sweep and the amp's response fit
-    inside it however large the latency is.
-    """
-    with tempfile.TemporaryDirectory(prefix="thr-measure-") as tmp:
-        play_path, rec_path = Path(tmp) / "sweep.wav", Path(tmp) / "rec.wav"
-        write_wav(play_path, sweep, fs)
-        rec = subprocess.Popen(
-            [
-                "pw-record",
-                "--target",
-                source.name,
-                "--rate",
-                str(fs),
-                "--channels",
-                str(channels),
-                "--format",
-                "s32",
-                str(rec_path),
-            ],
-            stderr=subprocess.PIPE,
-        )
-        try:
-            time.sleep(lead)
-            _run(["pw-play", "--target", sink.name, str(play_path)], timeout=len(sweep) / fs + 15)
-            time.sleep(tail)
-        finally:
-            rec.terminate()
-            try:
-                rec.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                rec.kill()
-        if not rec_path.exists():
-            raise AudioError(
-                "recording produced no file: " + (rec.stderr.read().decode() if rec.stderr else "")
-            )
-        data, rate = read_wav(rec_path)
-    if rate != fs:
-        raise AudioError(f"recorded at {rate} Hz, expected {fs}")
-    return data
+
+def record(
+    source: Node,
+    seconds: float,
+    path: Path,
+    fs: int = measure.SAMPLE_RATE,
+    channels: int = RECORD_CHANNELS,
+) -> None:
+    """Record *seconds* from *source* into a WAV file; Ctrl+C keeps what was recorded."""
+    get_backend().record(source, seconds, path, fs, channels)
+
+
+def open_capture(
+    source: Node, fs: int = measure.SAMPLE_RATE, channels: int = RECORD_CHANNELS
+) -> BlockSource:
+    return get_backend().open_capture(source, fs, channels)
 
 
 @dataclass(frozen=True)
@@ -201,45 +175,6 @@ def analyse_channels(
 
 def sanitize_name(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", text).strip("-")[:60]
-
-
-def record(
-    source: Node,
-    seconds: float,
-    path: Path,
-    fs: int = measure.SAMPLE_RATE,
-    channels: int = RECORD_CHANNELS,
-) -> None:
-    """Record *seconds* from *source* into *path* (s32 WAV); Ctrl+C keeps what was recorded."""
-    rec = subprocess.Popen(
-        [
-            "pw-record",
-            "--target",
-            source.name,
-            "--rate",
-            str(fs),
-            "--channels",
-            str(channels),
-            "--format",
-            "s32",
-            str(path),
-        ],
-        stderr=subprocess.PIPE,
-    )
-    try:
-        time.sleep(seconds)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        rec.terminate()
-        try:
-            rec.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            rec.kill()
-    if not path.exists() or path.stat().st_size < 100:
-        raise AudioError(
-            "recording produced no file: " + (rec.stderr.read().decode() if rec.stderr else "")
-        )
 
 
 ACTIVE_DBFS = -60.0  # a channel quieter than this is treated as silent

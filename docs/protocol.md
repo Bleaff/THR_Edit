@@ -184,6 +184,14 @@ Tested on a THR5A with write / read-dump / restore (restore matched all 35 mappe
   17.3 dB on 1+2 versus 23.0 dB on 3+4 (the processed signal is denser). Conclusion: **1+2 = processed output, 3+4 = dry
   input (DI)**. This is one take on one amp; `thr-control audio record` repeats the test on every take.
 
+- Live streaming works: `pw-record --target <THR source> --channels 4 --format s32 --raw --latency 20ms -` delivers raw
+  little-endian 32-bit frames of four channels that the app splits into dry (3+4) and wet (1+2). A real run showed the dry
+  input at about -49 dBFS and the processed output at about -16 dBFS while playing (about 33 dB of gain through the amp).
+
+- PortAudio (`sounddevice`) on this Linux machine lists the amp as `THR5: USB Audio (hw:2,0)` but opening its 4-channel
+  input failed with `Invalid sample rate` while PipeWire owns the device, so Linux keeps PipeWire as the default backend.
+  The PortAudio path exists for macOS and has not been run against a Mac yet.
+
 ## Implementation note: do not use rtmidi callbacks
 
 Opening the amp's input port with a mido/rtmidi callback made `port.close()` hang intermittently (1 of 14 runs; stack:

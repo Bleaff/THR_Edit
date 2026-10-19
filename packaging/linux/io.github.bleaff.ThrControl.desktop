@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=THR Control
+GenericName=Amplifier Editor
+Comment=Unofficial editor for Yamaha THR guitar amplifiers
+Exec=thr-control-gui
+Icon=io.github.bleaff.ThrControl
+Terminal=false
+Categories=AudioVideo;Audio;Midi;Music;
+Keywords=Yamaha;THR;guitar;amplifier;editor;MIDI;presets;
+StartupNotify=true
+StartupWMClass=io.github.bleaff.ThrControl
