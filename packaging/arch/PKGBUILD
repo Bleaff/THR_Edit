@@ -7,7 +7,7 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="Unofficial editor for first-generation Yamaha THR guitar amplifiers (USB MIDI)"
 arch=('any')
-url="https://github.com/bleaff/thr-control"
+url="https://github.com/Bleaff/THR_Edit"
 license=('AGPL-3.0-or-later')
 depends=(
   'python'

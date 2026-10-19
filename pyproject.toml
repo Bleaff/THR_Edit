@@ -29,6 +29,10 @@ dependencies = [
     "sounddevice>=0.5; sys_platform != 'linux'",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Bleaff/THR_Edit"
+Issues = "https://github.com/Bleaff/THR_Edit/issues"
+
 [project.optional-dependencies]
 portaudio = ["sounddevice>=0.5"]  # Linux only: use PortAudio instead of the PipeWire tools
 

@@ -22,6 +22,8 @@
     </ul>
     <p>This is an independent project. Yamaha and THR are trademarks of their owner.</p>
   </description>
+  <url type="homepage">https://github.com/Bleaff/THR_Edit</url>
+  <url type="bugtracker">https://github.com/Bleaff/THR_Edit/issues</url>
   <launchable type="desktop-id">io.github.bleaff.ThrControl.desktop</launchable>
   <provides>
     <binary>thr-control-gui</binary>
