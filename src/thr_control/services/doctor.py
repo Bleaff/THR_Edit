@@ -74,15 +74,41 @@ def _portaudio_ok() -> bool:
         return False
 
 
-def _midi_backend_ok() -> bool:
+def _midi_backend_error() -> str | None:
+    """None when the MIDI backend loads, otherwise the reason (e.g. a missing system library)."""
     try:
         import mido
 
         mido.set_backend("mido.backends.rtmidi")
         mido.get_input_names()
-        return True
-    except Exception:
-        return False
+        return None
+    except Exception as exc:
+        return str(exc) or type(exc).__name__
+
+
+def midi_library_hint(error: str, linux: bool) -> str:
+    """Plain-language fix for a MIDI backend that cannot be loaded."""
+    text = error.lower()
+    if not linux:
+        return "Reinstall THR Control so that python-rtmidi is rebuilt for your system."
+    if "libjack" in text:
+        return (
+            "The JACK client library is missing (python-rtmidi needs it even if you do not use "
+            "JACK). "
+            "Arch: `sudo pacman -S pipewire-jack` (or `jack2`); Debian/Ubuntu: "
+            "`sudo apt install libjack-jackd2-0`; Fedora: "
+            "`sudo dnf install pipewire-jack-audio-connection-kit-libs`."
+        )
+    if "libasound" in text:
+        return (
+            "The ALSA library is missing. Arch: `sudo pacman -S alsa-lib`; Debian/Ubuntu: "
+            "`sudo apt install libasound2`; Fedora: `sudo dnf install alsa-lib`."
+        )
+    return (
+        "A system library needed by python-rtmidi is missing. It needs the ALSA and JACK client "
+        "libraries (Arch: `alsa-lib`, `pipewire-jack`; Debian/Ubuntu: `libasound2`, "
+        "`libjack-jackd2-0`; Fedora: `alsa-lib`, `pipewire-jack-audio-connection-kit-libs`)."
+    )
 
 
 def _gui_ok() -> bool:
@@ -98,7 +124,7 @@ def _gui_ok() -> bool:
 class Probes:
     platform: str = field(default_factory=lambda: sys.platform)
     python: tuple[int, int] = field(default_factory=lambda: sys.version_info[:2])
-    midi_backend_ok: Callable[[], bool] = _midi_backend_ok
+    midi_backend_error: Callable[[], str | None] = _midi_backend_error
     seq_access: Callable[[], bool] = lambda: os.access("/dev/snd/seq", os.R_OK | os.W_OK)
     inputs: Callable[[], list[str]] = list_input_ports
     outputs: Callable[[], list[str]] = list_output_ports
@@ -133,14 +159,16 @@ def run_checks(probes: Probes | None = None, heartbeat_timeout: float = 2.5) -> 
         )
     )
 
-    if not p.midi_backend_ok():
-        hint = (
-            "Install the ALSA library (Arch: `sudo pacman -S alsa-lib`, Debian/Ubuntu: "
-            "`sudo apt install libasound2`)."
-            if linux
-            else "Reinstall THR Control so that python-rtmidi is rebuilt for your system."
+    midi_error = p.midi_backend_error()
+    if midi_error is not None:
+        out.append(
+            Check(
+                "MIDI backend",
+                FAIL,
+                f"python-rtmidi cannot be loaded: {midi_error}",
+                midi_library_hint(midi_error, linux),
+            )
         )
-        out.append(Check("MIDI backend", FAIL, "python-rtmidi cannot be loaded", hint))
         return out + _tail(p, out, linux)
     out.append(Check("MIDI backend", OK, "python-rtmidi works"))
 

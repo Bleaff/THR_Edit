@@ -31,7 +31,7 @@ def good(**over):
     base = dict(
         platform="linux",
         python=(3, 12),
-        midi_backend_ok=lambda: True,
+        midi_backend_error=lambda: None,
         seq_access=lambda: True,
         inputs=lambda: [THR],
         outputs=lambda: [THR],
@@ -96,18 +96,35 @@ def test_doctor_reports_each_problem_with_a_fix(probes, name, status, hint_part)
     assert check.status == status and hint_part.lower() in (check.hint + check.detail).lower()
 
 
-def test_doctor_unopenable_port_and_missing_backend():
+def test_doctor_unopenable_port():
     def boom(port, timeout):
         raise OSError("device busy")
 
     c = by_name(doctor.run_checks(good(heartbeat=boom)))["Amp port"]
     assert c.status == doctor.FAIL and "device busy" in c.detail
-    checks = by_name(doctor.run_checks(good(midi_backend_ok=lambda: False)))
-    assert (
-        checks["MIDI backend"].status == doctor.FAIL
-        and "alsa" in checks["MIDI backend"].hint.lower()
-    )
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            "libjack.so.0: cannot open shared object file: No such file or directory",
+            "pipewire-jack",
+        ),
+        ("libasound.so.2: cannot open shared object file", "alsa-lib"),
+        ("something else went wrong", "ALSA and JACK"),
+    ],
+)
+def test_doctor_names_the_missing_midi_library(error, expected):
+    checks = by_name(doctor.run_checks(good(midi_backend_error=lambda: error)))
+    c = checks["MIDI backend"]
+    assert c.status == doctor.FAIL and error in c.detail and expected in c.hint
+    assert "libjack-jackd2-0" in c.hint or "libasound2" in c.hint  # Debian/Ubuntu names too
     assert "Amplifier" not in checks  # cannot look for the amp without a MIDI backend
+
+
+def test_midi_hint_off_linux_is_generic():
+    assert "Reinstall" in doctor.midi_library_hint("anything", linux=False)
 
 
 def test_doctor_on_macos_skips_linux_only_checks_and_checks_portaudio():
@@ -234,3 +251,87 @@ def test_packaging_files_validate():
         problems = [ln for ln in done.stdout.splitlines() if ln.startswith(("E:", "W:"))]
         # a homepage URL is added once the public repository exists
         assert all("url-homepage-missing" in ln for ln in problems), done.stdout
+
+
+# -- macOS and Arch packaging files ----------------------------------------------------------------
+def test_icns_is_a_well_formed_icon_container():
+    import struct
+
+    data = (ROOT / "packaging/macos/ThrControl.icns").read_bytes()
+    assert data[:4] == b"icns" and struct.unpack(">I", data[4:8])[0] == len(data)
+    pos, found = 8, {}
+    while pos < len(data):
+        ostype = data[pos : pos + 4].decode("ascii")
+        length = struct.unpack(">I", data[pos + 4 : pos + 8])[0]
+        png = data[pos + 8 : pos + length]
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+        width, height = struct.unpack(">II", png[16:24])  # PNG IHDR
+        assert width == height
+        found[ostype] = width
+        pos += length
+    assert pos == len(data)
+    assert found["ic07"] == 128 and found["ic08"] == 256 and found["ic09"] == 512
+    assert (
+        found["ic10"] == 1024 and found["icp4"] == 16 and found["ic14"] == 512
+    )  # incl. retina sizes
+
+
+def test_icns_generator_reproduces_the_committed_icon():
+    pytest.importorskip("PySide6.QtSvg")
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "make_icns", ROOT / "packaging/macos/make_icns.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    built = module.build()
+    committed = (ROOT / "packaging/macos/ThrControl.icns").read_bytes()
+    assert built[:4] == committed[:4] == b"icns" and len(built) > 100_000
+    assert [built[i : i + 4] for i in (8,)] == [committed[8:12]]
+
+
+def test_macos_spec_requests_microphone_access_and_bundles_the_data():
+    spec = (ROOT / "packaging/macos/thr-control.spec").read_text()
+    for needle in (
+        "NSMicrophoneUsageDescription",  # without it macOS records silence
+        "io.github.bleaff.ThrControl",
+        "mido.backends.rtmidi",  # chosen by name at runtime: PyInstaller cannot see it
+        "thr_control/data",
+        "ThrControl.icns",
+    ):
+        assert needle in spec, needle
+    assert (ROOT / "packaging/macos/launcher.py").read_text().count("thr_control.gui.app") == 1
+    script = (ROOT / "packaging/macos/build.sh").read_text()
+    assert "codesign" in script and "hdiutil" in script and "Darwin" in script
+    assert subprocess.run(["bash", "-n", str(ROOT / "packaging/macos/build.sh")]).returncode == 0
+    assert (ROOT / "packaging/macos/build.sh").stat().st_mode & 0o111  # executable
+
+
+def test_arch_recipe_matches_the_project():
+    recipe = (ROOT / "packaging/arch/PKGBUILD").read_text()
+    meta = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert f"pkgver={__version__}" in recipe
+    assert (
+        "license=('AGPL-3.0-or-later')" in recipe
+        and "AGPL-3.0-or-later" in meta["project"]["license"]
+    )
+    for dep in (
+        "pyside6",
+        "python-mido",
+        "python-rtmidi",
+        "python-numpy",
+        "python-pydantic",
+        "python-platformdirs",
+    ):
+        assert f"'{dep}'" in recipe, dep
+    assert "|| true" not in recipe  # a check() that cannot fail would hide broken tests
+    assert f"local id={APP_ID}" in recipe  # the same id as the desktop file and metainfo
+    assert "$id.desktop" in recipe and "$id.metainfo.xml" in recipe and "$id.svg" in recipe
+
+
+def test_workflows_exist_and_use_the_scripts():
+    ci = (ROOT / ".github/workflows/ci.yml").read_text()
+    mac = (ROOT / ".github/workflows/macos-app.yml").read_text()
+    assert "macos-latest" in ci and "pytest" in ci and "ruff check" in ci and "mypy" in ci
+    assert "packaging/macos/build.sh" in mac and "macos-13" in mac and "macos-14" in mac

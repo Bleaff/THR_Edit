@@ -1,0 +1,23 @@
+name: macOS app
+
+# Builds an unsigned .app and .dmg for Intel and Apple silicon. Run it by hand or by pushing a v* tag.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]   # Intel, Apple silicon
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: packaging/macos/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: THR-Control-${{ matrix.os }}
+          path: dist/*.dmg

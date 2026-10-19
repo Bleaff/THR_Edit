@@ -23,14 +23,24 @@ thr-control install-desktop       # adds "THR Control" to your application menu 
 thr-control-gui                   # or just start it from the menu
 ```
 
-After the first release this becomes `pipx install thr-control`; Flatpak, AUR and macOS packages are planned.
+After the first release this becomes `pipx install thr-control`.
+
+### Other ways to get it
+
+Each of these is prepared in `packaging/`; see the status in the table.
+
+| Package | Where | Status |
+| --- | --- | --- |
+| Arch / Manjaro (AUR) | `packaging/arch/PKGBUILD` | Builds with `makepkg` and the files land in the right places; all dependencies are in the official repositories. Not submitted: it needs the public repository URL first |
+| macOS `.app` / `.dmg` | `packaging/macos/` (`build.sh`) | The PyInstaller configuration was validated on Linux (the bundle starts, finds its data and opens the MIDI ports), but a Mac build has **not been run**; ad-hoc signed, not notarized |
+| Flatpak | `packaging/flatpak/` | Manifest drafted, **not built**; recording and the live plot would be unavailable in the sandbox |
 
 Plug the amp in with its USB cable and switch it on. If something is missing, `thr-control doctor` explains it in plain
 words (for example: "add yourself to the audio group" or "install the PipeWire tools").
 
 | Platform | Status |
 | --- | --- |
-| **Linux** (tested on Manjaro) | Supported: MIDI control, presets, GUI, recording, live measurement. Needs the ALSA library; recording and live measurement also need the PipeWire tools (`pw-record`, `pw-play`, `pw-dump`) |
+| **Linux** (tested on Manjaro) | Supported: MIDI control, presets, GUI, recording, live measurement. Needs the ALSA and JACK *client libraries* (python-rtmidi links both; JACK itself is not used: Arch `pipewire-jack`, Debian/Ubuntu `libjack-jackd2-0`); recording and live measurement also need the PipeWire tools (`pw-record`, `pw-play`, `pw-dump`) |
 | **macOS** | MIDI control, presets and the GUI should work (CoreMIDI), and recording and live measurement use PortAudio, but **none of it has been tested on a Mac yet**: see `docs/macos-testing.md` |
 | **Windows** | Not supported (the THR needs a Yamaha driver there) |
 

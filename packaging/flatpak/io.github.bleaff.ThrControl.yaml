@@ -1,0 +1,49 @@
+# Flatpak manifest for THR Control. LOCAL DEVELOPMENT VARIANT: it downloads Python packages during the
+# build (see the notes in README.md). Flathub requires offline sources with hashes instead.
+app-id: io.github.bleaff.ThrControl
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+base: io.qt.PySide.BaseApp   # provides PySide6, so it is not built or downloaded again
+base-version: '6.11'
+command: thr-control-gui
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  # MIDI: the amp is reached through the ALSA sequencer (/dev/snd/seq), which Flatpak exposes
+  # only with device access. Nothing else in /dev is used.
+  - --device=all
+
+modules:
+  - name: python-dependencies
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network   # development only; replace with generated offline sources for Flathub
+    build-commands:
+      # python-rtmidi is built from source without JACK: the PyPI wheel links libjack.so.0, which
+      # the runtime does not ship.
+      - >-
+        pip3 install --prefix=/app --no-cache-dir
+        mido numpy pydantic platformdirs
+      - >-
+        pip3 install --prefix=/app --no-cache-dir --no-binary python-rtmidi
+        --config-settings=setup-args=-Djack=false
+        python-rtmidi
+
+  - name: thr-control
+    buildsystem: simple
+    build-commands:
+      # --no-deps: PySide6 comes from the base app, the rest from the module above
+      - pip3 install --prefix=/app --no-deps .
+      - install -Dm644 packaging/linux/io.github.bleaff.ThrControl.desktop -t /app/share/applications/
+      - install -Dm644 packaging/linux/io.github.bleaff.ThrControl.metainfo.xml -t /app/share/metainfo/
+      - install -Dm644 src/thr_control/data/icons/io.github.bleaff.ThrControl.svg -t /app/share/icons/hicolor/scalable/apps/
+    build-options:
+      build-args:
+        - --share=network
+    sources:
+      - type: dir
+        path: ../..
