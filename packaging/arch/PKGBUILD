@@ -1,9 +1,8 @@
 # Maintainer: Bleaff
 #
-# The upstream URL below is a placeholder until the public repository exists; fix `url` and
-# replace `sha256sums` with the real checksum (`updpkgsums`) before submitting to the AUR.
+# Replace `sha256sums` with the real checksum (`updpkgsums`) once the tag exists, before submitting to the AUR.
 pkgname=thr-control
-pkgver=0.1.0
+pkgver=1.0.1
 pkgrel=1
 pkgdesc="Unofficial editor for first-generation Yamaha THR guitar amplifiers (USB MIDI)"
 arch=('any')
@@ -29,22 +28,23 @@ optdepends=(
   'pipewire: recording and live measurement (provides pw-record, pw-play, pw-dump)'
   'pipewire-jack: the JACK client library that python-rtmidi links against'
 )
+_srcdir="THR_Edit-$pkgver"  # GitHub names the extracted folder after the repository
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
 build() {
-  cd "$pkgname-$pkgver"
+  cd "$_srcdir"
   python -m build --wheel --no-isolation
 }
 
 check() {
-  cd "$pkgname-$pkgver"
+  cd "$_srcdir"
   # The test suite needs no amp and no display.
   QT_QPA_PLATFORM=offscreen PYTHONPATH=src python -m pytest -q -p no:cacheprovider
 }
 
 package() {
-  cd "$pkgname-$pkgver"
+  cd "$_srcdir"
   python -m installer --destdir="$pkgdir" dist/*.whl
 
   local id=io.github.bleaff.ThrControl

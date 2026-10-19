@@ -47,7 +47,12 @@
     <control>keyboard</control>
   </supports>
   <releases>
-    <release version="0.1.0" date="2026-10-19">
+    <release version="1.0.1" date="2026-10-19">
+      <description>
+        <p>Maintenance release: version metadata, README and project links.</p>
+      </description>
+    </release>
+    <release version="1.0.0" date="2026-10-19">
       <description>
         <p>First release.</p>
       </description>
