@@ -3,14 +3,18 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtWidgets import (
+    QComboBox,
+    QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from ..domain.tempo import DIVISIONS, MAX_BPM, MIN_BPM, bpm_for, delay_value
 from ..protocol.thr_v2 import MODULATION_LABELS, PARAMETERS
 from .widgets import ParamCombo, ParamKnob, ParamSpin, ParamSwitch, ParamTime
 
@@ -72,6 +76,31 @@ class EffectsPanel(QGroupBox):
         delay.row.addWidget(self.delay_time)
         self.delay_high_cut = _table_spin("delay_high_cut", " Hz")
         self.delay_low_cut = _table_spin("delay_low_cut", " Hz")
+        self.bpm = QDoubleSpinBox()
+        self.bpm.setRange(MIN_BPM, MAX_BPM)
+        self.bpm.setDecimals(1)
+        self.bpm.setValue(100.0)
+        self.bpm.setSuffix(" BPM")
+        self.division = QComboBox()
+        self.division.addItems(list(DIVISIONS))
+        self.division.setCurrentText("1/4")
+        self.sync_button = QPushButton("Set")
+        self.sync_button.setToolTip("Set the delay time to this note length at this tempo")
+        self.sync_info = QLabel("")
+        self.sync_info.setStyleSheet("color: #8a8a8a; font-size: 11px;")
+        sync_row = QWidget()
+        sr = QHBoxLayout(sync_row)
+        sr.setContentsMargins(0, 0, 0, 0)
+        sync_label = QLabel("SYNC")
+        sync_label.setObjectName("knobLabel")
+        sr.addWidget(sync_label)
+        sr.addWidget(self.bpm, 1)
+        sr.addWidget(self.division, 1)
+        sr.addWidget(self.sync_button)
+        delay.extra.addWidget(sync_row)
+        delay.extra.addWidget(self.sync_info)
+        self.sync_button.clicked.connect(self.apply_sync)
+        self.division.currentIndexChanged.connect(lambda _i: self._update_tempo_readout())
         delay.extra.addWidget(_labelled("HIGH CUT", self.delay_high_cut))
         delay.extra.addWidget(_labelled("LOW CUT", self.delay_low_cut))
         delay.body.addWidget(self.delay_feedback)
@@ -136,9 +165,29 @@ class EffectsPanel(QGroupBox):
         grid.addWidget(compressor, 2, 0)
         self._boxes = (modulation, delay, reverb, gate, compressor)
 
+    def apply_sync(self) -> None:
+        """Set the delay time from the tempo and note length (normal write path)."""
+        try:
+            value = delay_value(self.bpm.value(), self.division.currentText())
+        except ValueError as exc:
+            self.sync_info.setText(str(exc))
+            return
+        self.delay_time.apply(value)
+        self.delay_time.user_changed.emit("delay_time", value)
+        self._update_tempo_readout()
+
+    def _update_tempo_readout(self) -> None:
+        value = self.delay_time.get()
+        if value > 0:
+            bpm = bpm_for(value, self.division.currentText())
+            self.sync_info.setText(
+                f"Current delay = {bpm:.1f} BPM as {self.division.currentText()}"
+            )
+
     def update_layouts(self) -> None:
         """Show only the controls that apply to the current modulation and reverb types."""
         self._update_modulation()
+        self._update_tempo_readout()
         spring = self.reverb_type.get() == 3
         self._reverb_spring.setVisible(spring)
         self._reverb_full.setVisible(not spring)

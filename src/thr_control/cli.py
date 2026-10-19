@@ -7,22 +7,31 @@ port. It never opens an output port and never transmits anything.
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import sys
 import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
+import numpy as np
+
 from . import __version__
+from .domain import eq as eq_domain
+from .domain import measure
 from .domain.presets import Preset
+from .domain.tempo import bpm_for, delay_value, parse_division
 from .midi.discovery import DetectedDevice, detect_devices, list_input_ports, list_output_ports
 from .midi.monitor import CapturedMessage, MidiMonitor, format_hex, format_message
 from .midi.transport import RequestTransport
 from .protocol import messages, thr_v2
 from .protocol.parser import SettingsDump, describe, parse
+from .services import audio
 from .services.capture import diff_payloads, format_changes, run_mapping
 from .services.controller import DeviceError, ThrController, apply_preset
 from .services.preset_manager import PresetError, PresetManager
+from .storage import measurements
 from .storage.repository import PresetRepository
 
 
@@ -418,6 +427,305 @@ def cmd_presets(args: argparse.Namespace, out: TextIO | None = None) -> int:
     return 1 if bad else 0
 
 
+def cmd_delay_sync(args: argparse.Namespace, out: TextIO | None = None) -> int:
+    """Set the delay time to a note length at a tempo (dry run unless --yes)."""
+    out = out or sys.stdout
+    try:
+        division = parse_division(args.division)
+        value = delay_value(args.bpm, division)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    command = thr_v2.build_set_command("delay_time", value)
+    print(f"{division} at {args.bpm:g} BPM = {value / 10:.1f} ms (delay_time {value})", file=out)
+    print(f"Command: {format_hex(command)}", file=out)
+    if not args.yes:
+        print("Dry run: nothing sent. Re-run with --yes to transmit.", file=out)
+        return 0
+    opened = _open_controller()
+    if opened is None:
+        return 1
+    transport, ctl = opened
+    try:
+        result = ctl.set_parameter("delay_time", value)
+    except DeviceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        transport.close()
+    if not result.ok:
+        print(f"MISMATCH (amp reports {result.confirmed})", file=out)
+        return 1
+    note = "" if result.confirmed is None else f" ({bpm_for(result.confirmed, division):.1f} BPM)"
+    print(f"Confirmed by readback{note}.", file=out)
+    return 0
+
+
+def cmd_audio(args: argparse.Namespace, out: TextIO | None = None) -> int:
+    """USB-audio tools: list the amp's audio nodes, or probe the capture channels."""
+    out = out or sys.stdout
+    try:
+        nodes = audio.list_nodes()
+    except audio.AudioError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    sink, source = audio.find_thr(nodes)
+    if args.action == "show":
+        return _show_measurement(args, out)
+    by_id = {n.id: n for n in nodes}
+    if args.sink is not None:
+        sink = by_id.get(args.sink)
+        if sink is None or sink.kind != "sink":
+            print(f"error: no output node with id {args.sink}", file=sys.stderr)
+            return 1
+    if args.source is not None:
+        source = by_id.get(args.source)
+        if source is None or source.kind != "source":
+            print(f"error: no input node with id {args.source}", file=sys.stderr)
+            return 1
+    if args.action == "record":
+        return _record(args, source, out)
+    if args.action == "devices":
+        for n in nodes:
+            mark = "  <- THR" if n in (sink, source) else ""
+            print(f"[{n.id:>3}] {n.kind:<6} {n.description} ({n.name}){mark}", file=out)
+        return 0
+    if sink is None or source is None:
+        print(
+            "error: the THR's USB audio is not available (is the amp connected?)", file=sys.stderr
+        )
+        return 1
+    try:
+        sweep = measure.log_sweep(args.duration, dbfs=args.level)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Play a {args.duration:g} s sweep at {args.level:g} dBFS to: {sink.description}", file=out
+    )
+    print(f"Record {audio.RECORD_CHANNELS} channels from:      {source.description}", file=out)
+    print("This is audible from the amp's speaker/headphones (keep it quiet).", file=out)
+    if not args.yes:
+        print("Dry run: nothing played. Re-run with --yes.", file=out)
+        return 0
+    try:
+        recorded = audio.play_and_record(sweep, sink, source)
+    except audio.AudioError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Recorded {recorded.shape[0] / measure.SAMPLE_RATE:.1f} s, {recorded.shape[1]} channels.",
+        file=out,
+    )
+    if args.action == "measure":
+        return _finish_measurement(args, recorded, sweep, sink, source, out)
+    for r in audio.analyse_channels(recorded, sweep):
+        verdict = "CARRIES THE SWEEP" if r.carries_sweep else "no sweep (noise only / silence)"
+        print(
+            f"  channel {r.channel}: level {r.rms_dbfs:7.1f} dBFS | "
+            f"match {r.detection_db:5.1f} dB | {verdict}",
+            file=out,
+        )
+    return 0
+
+
+def _record(args: argparse.Namespace, source: audio.Node | None, out: TextIO) -> int:
+    """Record the amp's USB capture, report each channel, and save every pair as a 24-bit WAV."""
+    if source is None:
+        print(
+            "error: the THR's USB audio is not available (is the amp connected?)", file=sys.stderr
+        )
+        return 1
+    if not 0 < args.seconds <= 3600:
+        print("error: --seconds must be between 0 and 3600", file=sys.stderr)
+        return 1
+    directory = Path(args.take_dir) if args.take_dir else Path.home() / "Music" / "thr-control"
+    directory.mkdir(parents=True, exist_ok=True)
+    base = directory / f"{time.strftime('%Y%m%d-%H%M%S')}-{audio.sanitize_name(args.name)}"
+    raw_path = base.with_name(base.name + "-raw.wav")
+    print(
+        f"Recording {args.seconds:g} s from {source.description}. Play now (Ctrl+C stops early).",
+        file=out,
+    )
+    try:
+        audio.record(source, args.seconds, raw_path)
+        data, rate = audio.read_wav(raw_path)
+    except audio.AudioError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Recorded {data.shape[0] / rate:.1f} s at {rate} Hz, {data.shape[1]} channels.", file=out
+    )
+    levels = audio.level_report(data)
+    for lv in levels:
+        note = (
+            "CLIPPING: turn the amp's volume down"
+            if lv.clipping
+            else ("" if lv.active else "silent")
+        )
+        print(
+            f"  channel {lv.channel}: rms {lv.rms_dbfs:7.1f} dBFS | "
+            f"peak {lv.peak_dbfs:7.1f} dBFS  {note}",
+            file=out,
+        )
+    if not any(lv.active for lv in levels):
+        print(
+            "All channels are silent: nothing was played, or the guitar is not reaching the amp.",
+            file=sys.stderr,
+        )
+        return 1
+    saved = []
+    for first in range(0, data.shape[1] - 1, 2):
+        pair = data[:, first : first + 2]
+        if not any(lv.active for lv in levels[first : first + 2]):
+            continue
+        path = base.with_name(f"{base.name}-ch{first + 1}-{first + 2}.wav")
+        audio.write_pcm24(path, pair, rate)
+        centroid = audio.spectral_centroid(pair.mean(axis=1), rate)
+        print(
+            f"  channels {first + 1}+{first + 2}: brightness {centroid:6.0f} Hz -> {path.name}",
+            file=out,
+        )
+        saved.append(path)
+    if data.shape[1] >= 4:
+        _describe_pairs(data, rate, out, levels)
+    settings: dict[str, int] = {}
+    opened = _open_controller()
+    if opened is not None:
+        transport, ctl = opened
+        try:
+            settings = ctl.read_settings()
+        except DeviceError:
+            pass
+        finally:
+            transport.close()
+    sidecar = base.with_name(base.name + "-amp-settings.json")
+    sidecar.write_text(
+        json.dumps({"seconds": args.seconds, "settings": settings}, indent=1) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Amp settings saved to {sidecar.name}", file=out)
+    return 0
+
+
+def _describe_pairs(
+    data: np.ndarray, rate: int, out: TextIO, levels: list[audio.ChannelLevel]
+) -> None:
+    """Say which channel pair looks like the amp's input and which like its output, and why.
+
+    Silent pairs are not described, and no verdict is given unless both pairs carry signal.
+    """
+    a, b = data[:, 0:2], data[:, 2:4]
+    active = {
+        "1+2": levels[0].active or levels[1].active,
+        "3+4": levels[2].active or levels[3].active,
+    }
+    for name, pair in (("1+2", a), ("3+4", b)):
+        if not active[name]:
+            continue
+        kind = (
+            "identical (mono)"
+            if audio.is_dual_mono(pair[:, 0], pair[:, 1])
+            else "different (stereo)"
+        )
+        print(f"  channels {name}: left and right are {kind}", file=out)
+    if not all(active.values()):
+        return
+    lag, corr = audio.pair_relation(a.mean(axis=1), b.mean(axis=1), rate)
+    if abs(corr) < 0.4:
+        print(
+            f"  the two pairs are only weakly related (correlation {corr:+.2f}); no verdict",
+            file=out,
+        )
+        return
+    first, second = ("3+4", "1+2") if lag > 0 else ("1+2", "3+4")
+    print(
+        f"  pair {first} arrives {abs(lag) / rate * 1000:.2f} ms before pair {second} "
+        f"(correlation {abs(corr):.2f}): {first} looks like the input, "
+        f"{second} the processed output",
+        file=out,
+    )
+
+
+FREQ_TABLE = (50, 100, 200, 500, 1000, 2000, 5000, 10000)
+
+
+def _print_channels(m: measurements.Measurement, out: TextIO) -> None:
+    print(
+        "  channel | "
+        + " ".join(f"{f / 1000:>4g}k" if f >= 1000 else f"{f:>5g}" for f in FREQ_TABLE)
+        + " Hz",
+        file=out,
+    )
+    for c in m.channels:
+        row = " ".join(
+            f"{float(np.interp(math.log(f), np.log(c.freqs), c.db)):+5.1f}" for f in FREQ_TABLE
+        )
+        print(f"  {c.channel:>7} | {row}  (latency {c.latency_ms:.1f} ms)", file=out)
+
+
+def _finish_measurement(
+    args: argparse.Namespace,
+    recorded: np.ndarray,
+    sweep: np.ndarray,
+    sink: audio.Node,
+    source: audio.Node,
+    out: TextIO,
+) -> int:
+    reports = audio.analyse_channels(recorded, sweep)
+    carrying = [r for r in reports if r.carries_sweep]
+    if not carrying:
+        print("No channel contains the sweep, so there is nothing to measure.", file=sys.stderr)
+        print(
+            "The amp's USB playback bypasses its amp model. Feed the sweep into the amp's guitar "
+            "input instead, e.g. from the computer's audio output with a cable, using --sink for "
+            "that output (see `thr-control audio devices`) and a low --level.",
+            file=sys.stderr,
+        )
+        return 1
+    settings: dict[str, int] = {}
+    opened = _open_controller()
+    if opened is not None:
+        transport, ctl = opened
+        try:
+            settings = ctl.read_settings()
+        except DeviceError:
+            pass
+        finally:
+            transport.close()
+    freqs = eq_domain.log_frequencies(120)
+    result = measurements.Measurement(
+        time.strftime("%Y-%m-%dT%H:%M:%S"), settings, sink.name, source.name, args.level
+    )
+    for r in carrying:
+        ir = measure.impulse_response(recorded[:, r.channel - 1], sweep)
+        db = measure.normalise(freqs, measure.magnitude_response(ir, freqs))
+        result.channels.append(
+            measurements.ChannelResult(r.channel, freqs, db, ir.latency_ms, r.detection_db)
+        )
+    path = measurements.save(result, Path(args.dir) if args.dir else None)
+    print(f"Channels with the sweep: {[r.channel for r in carrying]}", file=out)
+    _print_channels(result, out)
+    print(f"Saved {path}", file=out)
+    return 0
+
+
+def _show_measurement(args: argparse.Namespace, out: TextIO) -> int:
+    directory = Path(args.dir) if args.dir else None
+    paths = [Path(args.file)] if args.file else measurements.list_saved(directory)[-1:]
+    if not paths:
+        print("No saved measurements.", file=out)
+        return 0
+    try:
+        m = measurements.load(paths[0])
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"{paths[0].name}  amp settings: {m.settings or 'unknown'}", file=out)
+    _print_channels(m, out)
+    return 0
+
+
 def cmd_gui(args: argparse.Namespace, out: TextIO | None = None) -> int:
     from .gui.app import run
 
@@ -475,6 +783,26 @@ def build_parser() -> argparse.ArgumentParser:
     presets.add_argument("--favorites", action="store_true", help="list: favorites only")
     presets.add_argument("--yes", action="store_true", help="apply: actually transmit")
     presets.set_defaults(func=cmd_presets)
+    sync = sub.add_parser(
+        "delay-sync", help="set the delay time from a tempo (dry run unless --yes)"
+    )
+    sync.add_argument("bpm", type=float)
+    sync.add_argument("division", nargs="?", default="1/4", help="e.g. 1/4, dotted-1/8, 1/8T, 1/16")
+    sync.add_argument("--yes", action="store_true", help="actually transmit")
+    sync.set_defaults(func=cmd_delay_sync)
+    aud = sub.add_parser("audio", help="USB-audio tools for measuring the amp")
+    aud.add_argument("action", choices=["devices", "probe", "measure", "show", "record"])
+    aud.add_argument("--seconds", type=float, default=10.0, help="record: take length")
+    aud.add_argument("--name", default="take", help="record: file name prefix")
+    aud.add_argument("--take-dir", help="record: where to save (default: ~/Music/thr-control)")
+    aud.add_argument("file", nargs="?", help="show: measurement file")
+    aud.add_argument("--sink", type=int, help="PipeWire id of the output to play on (default: THR)")
+    aud.add_argument("--source", type=int, help="PipeWire id of the input to record (default: THR)")
+    aud.add_argument("--dir", help="measurement directory (default: ~/.local/share/thr-control)")
+    aud.add_argument("--level", type=float, default=-40.0, help="sweep level in dBFS (max -12)")
+    aud.add_argument("--duration", type=float, default=3.0, help="sweep length in seconds")
+    aud.add_argument("--yes", action="store_true", help="probe: actually play the sweep")
+    aud.set_defaults(func=cmd_audio)
     sub.add_parser("gui", help="launch the desktop application").set_defaults(func=cmd_gui)
     return parser
 

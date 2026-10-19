@@ -116,6 +116,7 @@ class MainWindow(QMainWindow):
         self.browser.message.connect(self.diagnostics.add_log)
         for control in self.controls.values():
             control.user_changed.connect(lambda *_: self._update_preset_label())
+            control.user_changed.connect(lambda *_: self.amp_panel.update_eq_curve())
 
         bridge.status.connect(self._on_status)
         bridge.settings.connect(self._on_settings)
@@ -159,6 +160,7 @@ class MainWindow(QMainWindow):
                 control.apply(value)
         self._have_state = True
         self.effects_panel.update_layouts()
+        self.amp_panel.update_eq_curve()
         self._update_preset_label()
 
     def _on_param(self, name: str, value: int) -> None:
@@ -166,6 +168,7 @@ class MainWindow(QMainWindow):
         if control is not None:
             control.apply(value)
         self.effects_panel.update_layouts()
+        self.amp_panel.update_eq_curve()
         self._update_preset_label()
 
     # -- presets -----------------------------------------------------------
@@ -196,6 +199,7 @@ class MainWindow(QMainWindow):
                 control.apply(value)
             self._on_user_changed(name, value)
         self.effects_panel.update_layouts()
+        self.amp_panel.update_eq_curve()
         self._update_preset_label()
         self.diagnostics.add_log(f"loaded preset {preset.name!r}")
 

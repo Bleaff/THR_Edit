@@ -7,7 +7,6 @@ validated parameter-set commands.
 
 from __future__ import annotations
 
-import queue
 import time
 from collections.abc import Callable
 from types import TracebackType
@@ -22,12 +21,14 @@ class RequestTransport:
         self.output_port = output_port
         self._in: Any = None
         self._out: Any = None
-        self._queue: queue.Queue[bytes] = queue.Queue()
 
     def open(self) -> None:
         import mido
 
-        self._in = mido.open_input(self.input_port, callback=self._on_message)
+        # Polled, not callback-driven: closing a port that has a Python callback while a message
+        # arrives can deadlock python-rtmidi (the native thread waits for the GIL that the
+        # closing thread holds). Messages queue inside rtmidi until poll() takes them.
+        self._in = mido.open_input(self.input_port)
         self._out = mido.open_output(self.output_port)
 
     def close(self) -> None:
@@ -35,10 +36,6 @@ class RequestTransport:
             if port is not None:
                 port.close()
         self._in = self._out = None
-
-    def _on_message(self, msg: Any) -> None:
-        if msg.type == "sysex":
-            self._queue.put(bytes(msg.bytes()))
 
     def send(self, data: bytes) -> None:
         """Send *data* if (and only if) it passes the allowlist."""
@@ -60,18 +57,26 @@ class RequestTransport:
 
     def poll(self, timeout: float) -> bytes | None:
         """Return the next received SysEx message, or None after *timeout* seconds."""
-        try:
-            return self._queue.get(timeout=timeout)
-        except queue.Empty:
-            return None
+        deadline = time.monotonic() + timeout
+        while True:
+            if self._in is None:
+                return None
+            msg = self._in.poll()
+            if msg is not None:
+                if msg.type == "sysex":
+                    return bytes(msg.bytes())
+                continue  # other message types are not used
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            time.sleep(min(0.002, remaining))
 
     def wait_for(self, accept: Callable[[bytes], bool], timeout: float) -> bytes | None:
         """Return the first received SysEx for which *accept* is true, or None on timeout."""
         deadline = time.monotonic() + timeout
         while (remaining := deadline - time.monotonic()) > 0:
-            try:
-                data = self._queue.get(timeout=remaining)
-            except queue.Empty:
+            data = self.poll(remaining)
+            if data is None:
                 return None
             if accept(data):
                 return data

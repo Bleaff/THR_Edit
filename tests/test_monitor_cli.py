@@ -1,3 +1,5 @@
+import time
+
 import mido
 
 from thr_control import cli
@@ -5,10 +7,19 @@ from thr_control.midi.monitor import CapturedMessage, MidiMonitor, format_messag
 
 
 class FakeInput:
-    def __init__(self, name, callback):
+    """A polled mido input (no callback: see the deadlock note in midi/transport.py)."""
+
+    def __init__(self, name, callback=None):
+        assert callback is None, "ports must be polled, never opened with a callback"
         self.name = name
-        self.callback = callback
+        self.pending = []
         self.closed = False
+
+    def push(self, msg):
+        self.pending.append(msg)
+
+    def poll(self):
+        return self.pending.pop(0) if self.pending else None
 
     def close(self):
         self.closed = True
@@ -25,8 +36,11 @@ def test_monitor_captures_sysex_and_closes(monkeypatch):
     got: list[CapturedMessage] = []
     mon = MidiMonitor("THR5 MIDI 1", got.append)
     mon.open()
-    holder["port"].callback(mido.Message("sysex", data=[0x43, 0x7D, 0x10]))
-    holder["port"].callback(mido.Message("note_on", note=60, velocity=64))
+    holder["port"].push(mido.Message("sysex", data=[0x43, 0x7D, 0x10]))
+    holder["port"].push(mido.Message("note_on", note=60, velocity=64))
+    deadline = time.monotonic() + 3
+    while len(got) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
     mon.close()
     assert holder["port"].closed and not mon.is_open
     assert got[0].kind == "sysex"
@@ -61,7 +75,7 @@ def test_probe_logs_and_never_opens_output(monkeypatch, tmp_path, capsys):
 
     def fake_open_input(name, callback=None):
         holder["port"] = FakeInput(name, callback)
-        holder["port"].callback(mido.Message("sysex", data=[1, 2, 3]))
+        holder["port"].push(mido.Message("sysex", data=[1, 2, 3]))
         return holder["port"]
 
     def forbidden(*a, **k):
@@ -111,7 +125,7 @@ def test_read_with_yes_sends_request_and_parses_reply(monkeypatch, capsys, tmp_p
     def fake_open_input(name, callback=None):
         port = FakeInput(name, callback)
         # amp replies with a dump as soon as it is asked: emulate by pre-queuing
-        callback(mido.Message.from_bytes(list(synthetic_dump())))
+        port.push(mido.Message.from_bytes(list(synthetic_dump())))
         return port
 
     monkeypatch.setattr(mido, "open_input", fake_open_input)

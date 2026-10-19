@@ -83,3 +83,16 @@ Cover: message encode/decode, protocol parsing, discovery logic, parameter valid
 - New behavior has tests that need no hardware.
 - Docs updated (`README.md` for install/verify steps on Manjaro, `docs/protocol.md` for protocol facts).
 - Summary states what was verified, what was assumed, and what remains unsupported.
+
+## Pitfalls learned on hardware
+
+- Never open a MIDI input port with a Python callback (`mido.open_input(..., callback=...)`). Closing such a port while a
+  message arrives deadlocked python-rtmidi about once in 14 runs (the native thread waits for the GIL that the closing
+  thread holds); the amp sends a heartbeat twice a second, so it will happen. Poll the port instead
+  (`RequestTransport.poll`, `MidiMonitor`). `tests/test_transport.py` guards this.
+- The amp pauses its heartbeat while its tuner is on; heartbeat silence alone is not a disconnect.
+- Some command ids mean different things per effect type (reverb id `41`); use `thr_v2.applies` / `filter_applicable`
+  and never write a value for a type other than the active one.
+- Hardware test scripts: print with `flush=True`, arm `faulthandler.dump_traceback_later`, and never use `pkill -f` with a
+  pattern that appears in your own command line.
+

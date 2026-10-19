@@ -2,7 +2,7 @@
 
 Open-source Linux controller for Yamaha THR amplifiers over USB-MIDI (target: THR5 V2 / cross-flashed THR5A). See `roadmap.md` and `AGENTS.md`.
 
-**Status: Phase 5 (preset management); delay (time, cuts), reverb (all types), noise gate, compressor, cabinet and modulation parameters are mapped.** `probe`, `decode`, `diff` are receive-only; `read`, `map`, `show` send only the settings request; `set` sends one validated parameter command and only with `--yes`. The transport allowlist permits nothing else, and firmware/bootloader commands (`DTA1ERASE`, `DTA1MAIN`, `DTA1ROMR`) are blocked by `protocol/safety.py`.
+**Status: Phase 5 (preset management) plus tempo-synced delay, EQ curve and preset notes; delay (time, cuts), reverb (all types), noise gate, compressor, cabinet and modulation parameters are mapped.** `probe`, `decode`, `diff` are receive-only; `read`, `map`, `show` send only the settings request; `set` sends one validated parameter command and only with `--yes`. The transport allowlist permits nothing else, and firmware/bootloader commands (`DTA1ERASE`, `DTA1MAIN`, `DTA1ROMR`) are blocked by `protocol/safety.py`.
 
 ## Install (Manjaro / Arch)
 
@@ -58,6 +58,16 @@ hidden by default), the protocol log, and exports everything to a text file.
 The Delay box has a **TIME** field in milliseconds. TAP/TIME on the amp (the delay must be on) updates it live, and
 editing it sends the new time to the amp.
 
+**Tempo-synced delay.** In the Delay box, enter a tempo and a note length (1/2, dotted 1/4, 1/4, dotted 1/8, 1/8,
+1/8 triplet, 1/16) and press **Set**: the delay time is set to that note length (the amp accepts 0.1-999.9 ms; requests
+outside that range are explained, never clamped). The line below shows your *current* delay time as a tempo for the chosen
+note length, so tapping TAP/TIME on the amp doubles as a tap-tempo readout. CLI: `thr-control delay-sync 92 dotted-1/8
+[--yes]`.
+
+**EQ curve.** Under the knobs, a frequency-response plot follows bass / middle / treble live (also when you turn the
+amp's own knobs). It is *illustrative*: the amp's real filter frequencies are not known, so the curve models a low shelf,
+a mid peak and a high shelf and is not measured.
+
 While the amp's tuner is on, the amp stops sending its heartbeat. The app keeps the connection, shows an amber
 **♪ AMP BUSY** badge, pauses writes, and re-reads the amp when it comes back. The amp does not report the pitch over
 MIDI, so tune using the amp's display.
@@ -72,8 +82,11 @@ preset, or asks for a name if none is active.
 
 - Presets are plain JSON files, one per preset, in `~/.local/share/thr-control/presets/` (`$XDG_DATA_HOME` respected),
   written atomically; corrupt files are skipped, never fatal. They live on the computer, so no onboard slots are needed.
-- Five starter presets (Warm Jazz, Texas Blues, Indie Clean, Golden Brown, Indie Rock) are added once on first run;
-  delete them freely, they stay deleted. They are starting points, and amp/effect type names are unverified on THR5.
+- 20 starter presets covering every genre (Blues, Jazz, Bossa Nova, Indie, Rock, Ambient, Clean) are added on first run, each
+  with a usage note. Presets added in later releases arrive once on upgrade; ones you delete stay deleted. They are
+  starting points, and amp/effect type names are unverified on THR5.
+- **Notes**: the box under the list edits the selected preset's notes (saved a moment after you stop typing, or when you
+  select another preset). Notes are searchable and shown as the list item's tooltip.
 - Export writes `{"format": "thr-control-preset", "version": 1, "presets": [...]}`. Import accepts that or a single
   preset object, validates every value, assigns fresh ids, and skips presets identical to ones already present.
 - Only mapped parameters are stored (see `thr-control params`). Loading a preset writes the amp model first, then cab
@@ -82,6 +95,42 @@ preset, or asks for a name if none is active.
 
 CLI: `thr-control presets list [--query blues] [--favorites]`, `presets apply "Warm Jazz" [--yes]`,
 `presets save "Name"` (reads the amp), `presets export FILE`, `presets import FILE`, `--library DIR` to use another folder.
+
+## Recording takes
+
+The amp's USB capture is a normal 4-channel, 48 kHz audio input, so any recorder (Ardour, Audacity, Reaper, OBS) can use it.
+`thr-control audio record` is a quick built-in recorder:
+
+```sh
+uv run thr-control audio record --seconds 30 --name riff     # play now; Ctrl+C stops early
+```
+
+It saves, in `~/Music/thr-control/` (or `--take-dir`): the untouched 4-channel recording (`-raw.wav`), each *active* channel
+pair as its own 24-bit stereo WAV (`-ch1-2.wav`, `-ch3-4.wav`), and `-amp-settings.json` with every mapped amp setting at
+that moment, so a take remembers its tone. It prints each channel's level (and warns about clipping or silence), whether each pair is mono or stereo, and
+which pair arrives first. On a THR5A, **channels 1+2 are the processed sound** (amp, cabinet and effects, stereo) and
+**channels 3+4 the dry guitar** (mono, about 1.2 ms earlier): you record the finished tone and a clean DI at the same time,
+so the DI can be re-amped later in a DAW.
+
+## Measuring the amp's real frequency response
+
+The amp is also a USB sound card. `thr-control audio` plays an exponential sine sweep, records the amp, and computes a
+smoothed frequency response (Farina deconvolution, 1/6-octave smoothing, normalised to 0 dB at 1 kHz).
+
+```sh
+uv run thr-control audio devices                   # PipeWire outputs/inputs, THR marked
+uv run thr-control audio probe                     # dry run: shows the plan, plays nothing
+uv run thr-control audio probe --yes               # quiet sweep to the amp's USB; reports which capture channels carry it
+uv run thr-control audio measure --sink 35 --level -50 --yes   # sweep from the PC's output into the amp's guitar input
+uv run thr-control audio show                      # print the latest saved measurement
+```
+
+**Important:** the amp's USB *playback* bypasses its amp model (a probe on a THR5A showed no capture channel contains
+it), so to measure the amp you must feed the sweep into its **guitar input jack**, for example from the computer's
+analog output with a 3.5 mm to 6.3 mm mono cable, choosing that output with `--sink`. Start very quiet (`--level -50`,
+low system volume): the sweep is audible from the amp, and levels above -12 dBFS are refused. Results are saved as JSON in
+`~/.local/share/thr-control/measurements/` together with the amp's settings at that moment. Needs `pw-play`/`pw-record`
+(PipeWire).
 
 ## Verify on hardware (Phase 1)
 

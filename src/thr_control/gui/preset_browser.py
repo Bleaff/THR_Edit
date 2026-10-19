@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -70,6 +71,18 @@ class PresetBrowser(QWidget):
         self.list = QListWidget()
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
+        self.notes = QPlainTextEdit()
+        self.notes.setPlaceholderText("Notes for the selected preset…")
+        self.notes.setMaximumHeight(90)
+        self.notes.setEnabled(False)
+        self._notes_loading = False
+        self._notes_pending: str | None = None  # preset id with unsaved notes
+        self._notes_timer = QTimer(self)
+        self._notes_timer.setSingleShot(True)
+        self._notes_timer.setInterval(700)
+        self._notes_timer.timeout.connect(self.flush_notes)
+        self.notes.textChanged.connect(self._on_notes_edited)
+
         self.load_button = QPushButton("Load to amp")
         self.save_as_button = QPushButton("Save amp as new…")
         self.rename_button = QPushButton("Rename")
@@ -98,12 +111,13 @@ class PresetBrowser(QWidget):
         layout.addWidget(self.genre)
         layout.addWidget(self.favorites)
         layout.addWidget(self.list, 1)
+        layout.addWidget(self.notes)
         layout.addLayout(grid)
 
         self.search.textChanged.connect(self.refresh)
         self.genre.currentIndexChanged.connect(self.refresh)
         self.favorites.toggled.connect(self.refresh)
-        self.list.itemSelectionChanged.connect(self._update_buttons)
+        self.list.itemSelectionChanged.connect(self._on_selection_changed)
         self.list.itemDoubleClicked.connect(lambda _item: self._load())
         self.list.customContextMenuRequested.connect(self._context_menu)
         self.load_button.clicked.connect(self._load)
@@ -129,6 +143,7 @@ class PresetBrowser(QWidget):
         return self.manager.get(item.data(Qt.ItemDataRole.UserRole))
 
     def refresh(self, select_id: str | None = None) -> None:
+        self.flush_notes()
         if not isinstance(select_id, str):
             select_id = None
         keep = select_id or (
@@ -149,11 +164,50 @@ class PresetBrowser(QWidget):
             star = "★ " if p.favorite else ""
             item = QListWidgetItem(f"{star}{p.name}   [{p.genre_label}]")
             item.setData(Qt.ItemDataRole.UserRole, p.id)
+            if p.notes:
+                item.setToolTip(p.notes)
             self.list.addItem(item)
             if p.id == keep:
                 self.list.setCurrentItem(item)
         self.list.blockSignals(False)
         self._update_buttons()
+        self._load_notes()
+
+    # -- notes ---------------------------------------------------------------
+    def _on_selection_changed(self) -> None:
+        self.flush_notes()
+        self._update_buttons()
+        self._load_notes()
+
+    def _load_notes(self) -> None:
+        preset = self.selected()
+        self._notes_loading = True
+        self.notes.setPlainText(preset.notes if preset else "")
+        self.notes.setEnabled(preset is not None)
+        self._notes_loading = False
+
+    def _on_notes_edited(self) -> None:
+        if self._notes_loading:
+            return
+        item = self.list.currentItem()
+        if item is not None:
+            self._notes_pending = item.data(Qt.ItemDataRole.UserRole)
+            self._notes_timer.start()
+
+    def flush_notes(self) -> None:
+        """Save notes typed so far (called after a pause in typing and before the list changes)."""
+        self._notes_timer.stop()
+        preset_id, self._notes_pending = self._notes_pending, None
+        if preset_id is None:
+            return
+        text = self.notes.toPlainText()
+        if text != (self.manager.get(preset_id) or Preset(name="x", settings={})).notes:
+            try:
+                self.manager.set_notes(preset_id, text)
+            except (PresetError, ValueError, OSError) as exc:
+                self.prompts.show_error(self, str(exc))
+                return
+            self.library_changed.emit()
 
     def _update_buttons(self) -> None:
         has = self.list.currentItem() is not None

@@ -164,6 +164,33 @@ Tested on a THR5A with write / read-dump / restore (restore matched all 35 mappe
 - A hardware test applied a spring-reverb preset with new delay cuts and a tremolo modulation type in one burst: all
   values stuck, and restoring the snapshot reproduced every setting.
 
+## USB audio (not MIDI): what was found
+
+- ALSA/PipeWire expose the THR5 as a stereo playback device (`THR5 Analog Stereo`) and a **4-channel** capture device
+  (`THR5 Analog Surround 4.0`, positions FL FR RL RR).
+- A quiet sweep played to the playback device (3 s, -40 dBFS) did **not** appear on any of the four capture channels
+  (matched-filter score 13 dB on every channel, i.e. noise; channel levels about -110 and -117 dBFS, effectively digital
+  silence with no guitar connected). So USB playback is not looped back and does not pass through the amp model.
+- To measure the amp the sweep must enter the guitar jack. Which of the four capture channels carries the processed
+  (wet) signal and which the dry one is still unknown until that measurement is done.
+
+- First recording test (3 s, no sweep playing, nothing intentionally played; 2026-10-19): channels 1 and 2 were nearly silent
+  (rms -82.3 dBFS, peak -70.8) and identical to each other, while channels 3 and 4 were louder (rms -56.3, peak -52.0, spectral
+  centroid about 1.4 kHz) and also identical to each other. An earlier run with the same device showed all four channels at
+  about -110 to -117 dBFS. So the pairs carry different things; what was audible on 3+4 then (noise, a cable, or playing) is unknown.
+- **Channel assignment (verified by a 30 s take of playing, preset Indie Rock: amp 2, cab 2, gain 62, master 40, reverb and
+  gate on):** channels 1+2 differ from each other (stereo; reverb is on), channels 3+4 are bit-identical (mono). Pair 3+4
+  arrives **57 samples = 1.19 ms before** pair 1+2 (normalised cross-correlation +0.76 at that lag), and the crest factor is
+  17.3 dB on 1+2 versus 23.0 dB on 3+4 (the processed signal is denser). Conclusion: **1+2 = processed output, 3+4 = dry
+  input (DI)**. This is one take on one amp; `thr-control audio record` repeats the test on every take.
+
+## Implementation note: do not use rtmidi callbacks
+
+Opening the amp's input port with a mido/rtmidi callback made `port.close()` hang intermittently (1 of 14 runs; stack:
+`mido/backends/rtmidi.py` `_close` -> `close_port`). The amp's 2 Hz heartbeat guarantees a message sometimes arrives while
+closing. After switching to polled reads (`RequestTransport.poll`, `MidiMonitor`), 60 consecutive `show` runs and 20
+`probe` runs against the amp completed without a stall.
+
 ## Documented by reference sources, NOT yet verified on this THR5
 
 Sources: `SysExTones/sysex_tones` (THR10; AGPL-3.0, so only facts are used, no code), `MathisRosenhauer/THR_Footswitch`

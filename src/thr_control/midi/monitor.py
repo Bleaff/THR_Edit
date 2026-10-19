@@ -43,17 +43,37 @@ class MidiMonitor:
         self._on_message = on_message
         self._port: Any = None
         self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
 
     def open(self) -> None:
         import mido
 
-        self._port = mido.open_input(self.port_name, callback=self._handle)
+        # Polled on our own thread rather than through a rtmidi callback: closing a port with a
+        # callback while a message arrives can deadlock python-rtmidi.
+        self._port = mido.open_input(self.port_name)
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._read_loop, name="midi-monitor", daemon=True)
+        self._thread.start()
 
     def close(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+            self._thread = None
         with self._lock:
             port, self._port = self._port, None
         if port is not None:
             port.close()
+
+    def _read_loop(self) -> None:
+        while not self._stop.is_set():
+            port = self._port
+            msg = port.poll() if port is not None else None
+            if msg is None:
+                time.sleep(0.002)
+            else:
+                self._handle(msg)
 
     @property
     def is_open(self) -> bool:

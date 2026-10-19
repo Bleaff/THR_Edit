@@ -177,6 +177,15 @@ def test_window_renders(app, setup, tmp_path):
 
 
 # -- presets ---------------------------------------------------------------
+import json  # noqa: E402
+from importlib import resources  # noqa: E402
+
+STARTERS = json.loads(
+    resources.files("thr_control.data").joinpath("starter_presets.json").read_text("utf-8")
+)["presets"]
+N0 = len(STARTERS)
+
+
 def select(win, name):
     for i in range(win.browser.list.count()):
         if win.browser.list.item(i).text().startswith((name, "★ " + name)):
@@ -188,12 +197,12 @@ def select(win, name):
 def test_sidebar_lists_starters_and_filters(app, setup):
     _, win = setup(None)
     b = win.browser
-    assert b.list.count() == 5
+    assert b.list.count() == N0
     b.search.setText("blues")
-    assert b.list.count() == 1 and "Texas Blues" in b.list.item(0).text()
+    assert b.list.count() == 3 and "Texas Blues" in b.list.item(2).text()
     b.search.setText("")
     b.genre.setCurrentText("Indie")
-    assert b.list.count() == 2
+    assert b.list.count() == sum(e["genre"] == "Indie" for e in STARTERS)
     b.genre.setCurrentText("All genres")
     b.favorites.setChecked(True)
     assert b.list.count() == 0
@@ -253,10 +262,10 @@ def test_save_updates_active_and_save_as_creates(app, setup):
     # sidebar button: save as new
     prompts.text = "Another"
     win.browser.save_as_button.click()
-    assert win.active.name == "Another" and win.browser.list.count() == 7
+    assert win.active.name == "Another" and win.browser.list.count() == N0 + 2
     prompts.text = None  # cancelled dialog creates nothing
     win.browser.save_as_button.click()
-    assert win.browser.list.count() == 7
+    assert win.browser.list.count() == N0 + 2
 
 
 def test_rename_duplicate_delete_favorite_via_sidebar(app, setup):
@@ -268,7 +277,7 @@ def test_rename_duplicate_delete_favorite_via_sidebar(app, setup):
     b.rename_button.click()
     assert b.list.currentItem().text().startswith("Golden Brownish")
     b.duplicate_button.click()
-    assert b.list.count() == 6 and "(copy)" in b.list.currentItem().text()
+    assert b.list.count() == N0 + 1 and "(copy)" in b.list.currentItem().text()
     b.favorite_button.click()
     assert b.list.currentItem().text().startswith("★")
     b.favorites.setChecked(True)
@@ -276,10 +285,10 @@ def test_rename_duplicate_delete_favorite_via_sidebar(app, setup):
     b.favorites.setChecked(False)
     prompts.confirm_answer = False
     b.delete_button.click()
-    assert b.list.count() == 6  # declined
+    assert b.list.count() == N0 + 1  # declined
     prompts.confirm_answer = True
     b.delete_button.click()
-    assert b.list.count() == 5
+    assert b.list.count() == N0
     prompts.text = "   "  # invalid name is reported, not crashed on
     select(win, "Warm Jazz")
     b.rename_button.click()
@@ -312,7 +321,7 @@ def test_import_export_via_sidebar(app, setup, tmp_path):
     assert win2.browser.list.count() == 0
     prompts.open_path = str(tmp_path / "out.json")
     win2.browser.import_button.click()
-    assert win2.browser.list.count() == 5  # export covered the whole (unfiltered) view
+    assert win2.browser.list.count() == N0  # export covered the whole (unfiltered) view
     prompts.open_path = str(tmp_path / "missing.json")
     win2.browser.import_button.click()
     assert prompts.errors
@@ -406,3 +415,60 @@ def test_reverb_controls_follow_reverb_type_and_delay_cuts(app, setup):
     # presets saved while on spring contain only spring values
     saved = win.current_settings()
     assert "reverb_spring_reverb" in saved and "reverb_time" not in saved
+
+
+def test_eq_curve_follows_knobs_and_amp_events(app, setup):
+    amp = FakeAmp(real_payload())
+    _, win = setup(amp)
+    assert pump(app, lambda: win.controls["master"].value() == 0x33)
+    curve = win.amp_panel.eq_curve
+    assert curve.values() == (0x3B, 0x32, 0x3E)  # the amp's bass/middle/treble at connect
+    amp.inject_event("bass", 100)
+    assert pump(app, lambda: curve.values()[0] == 100)
+    win.controls["treble"].knob.setValue(10)  # user drag
+    assert pump(app, lambda: curve.values()[2] == 10)
+    assert curve.curve()[0] > 5 and curve.curve()[-1] < -5  # bass boost, treble cut
+
+
+def test_tempo_sync_sets_delay_time_and_shows_tap_tempo(app, setup):
+    amp = FakeAmp(real_payload())
+    _, win = setup(amp)
+    assert pump(app, lambda: win.controls["master"].value() == 0x33)
+    panel = win.effects_panel
+    panel.bpm.setValue(120.0)
+    panel.division.setCurrentText("dotted 1/8")
+    panel.sync_button.click()
+    assert pump(app, lambda: ("delay_time", 3750) in amp.sets)
+    assert abs(win.controls["delay_time"].value() - 375.0) < 0.01
+    # a tap on the amp changes the time; the readout shows it as a tempo for the chosen division
+    amp.inject_event("delay_time", 3000)
+    assert pump(app, lambda: "Current delay = 150.0 BPM as dotted 1/8" in panel.sync_info.text())
+    # out-of-range requests are explained, not sent
+    sent = len(amp.sets)
+    panel.bpm.setValue(40.0)
+    panel.division.setCurrentText("1/2")
+    panel.sync_button.click()
+    assert "allows" in panel.sync_info.text() and len(amp.sets) == sent
+
+
+def test_preset_notes_are_edited_saved_searchable_and_shown(app, setup):
+    prompts = StubPrompts()
+    _, win = setup(None, prompts)
+    b = win.browser
+    assert not b.notes.isEnabled()
+    select(win, "Studio Clean")
+    assert b.notes.isEnabled() and "Neutral" in b.notes.toPlainText()
+    preset = b.selected()
+    b.notes.setPlainText("my own words about this tone")
+    b.flush_notes()  # normally fires 0.7 s after the last keystroke
+    assert win.manager.get(preset.id).notes == "my own words about this tone"
+    b.search.setText("own words")
+    assert b.list.count() == 1 and "Studio Clean" in b.list.item(0).text()
+    assert b.list.item(0).toolTip() == "my own words about this tone"
+    b.search.setText("")
+    # switching selection saves pending edits to the preset they belong to
+    select(win, "Studio Clean")
+    b.notes.setPlainText("edited, then switched away")
+    select(win, "Funk Clean")
+    assert win.manager.get(preset.id).notes == "edited, then switched away"
+    assert "Tight" in b.notes.toPlainText()

@@ -5,6 +5,7 @@ from typing import Any
 from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QVBoxLayout
 
 from ..protocol.thr_v2 import AMP_NAMES, CAB_NAMES
+from .eq_curve import CAPTION, EqCurve
 from .widgets import AmpSelector, ParamCombo, ParamKnob
 
 
@@ -44,7 +45,19 @@ class AmplifierPanel(QGroupBox):
         layout.addWidget(self.selector)
         layout.addLayout(cab_row)
         layout.addLayout(row)
+        self.eq_curve = EqCurve()
+        eq_note = QLabel(CAPTION)
+        eq_note.setStyleSheet("color: #8a8a8a; font-size: 11px;")
+        layout.addWidget(self.eq_curve)
+        layout.addWidget(eq_note)
         layout.addWidget(note)
+
+    def update_eq_curve(self) -> None:
+        """Redraw the curve from the bass / middle / treble knobs."""
+        by_name = {k.param_name: k for k in self.knobs}
+        self.eq_curve.set_values(
+            by_name["bass"].get(), by_name["middle"].get(), by_name["treble"].get()
+        )
 
     def controls(self) -> list[Any]:
         return [self.selector, self.cab, *self.knobs]

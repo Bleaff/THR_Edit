@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from tests.fake_amp import FakeAmp, real_payload
 from thr_control import cli
 from thr_control.domain.presets import Genre, Preset, apply_order
+from thr_control.protocol import thr_v2
 from thr_control.services.controller import ThrController, apply_preset
 from thr_control.services.preset_manager import PresetError, PresetManager
 from thr_control.storage.repository import PresetRepository
@@ -168,21 +169,57 @@ def test_import_single_preset_and_errors(manager, tmp_path):
     assert manager.import_presets(tmp_path / "missing.json").errors
 
 
-def test_starter_presets_seed_once(manager):
+def _starter_entries():
+    from importlib import resources
+
+    raw = resources.files("thr_control.data").joinpath("starter_presets.json").read_text("utf-8")
+    return json.loads(raw)["presets"]
+
+
+def test_starter_presets_are_valid_and_cover_every_genre(manager):
+    entries = _starter_entries()
+    assert len(entries) >= 20
+    assert len({e["starter_id"] for e in entries}) == len(entries)
+    assert len({e["name"].casefold() for e in entries}) == len(entries)
     added = manager.seed_starters()
-    assert {p.name for p in added} == {
-        "Warm Jazz",
-        "Texas Blues",
-        "Indie Clean",
-        "Golden Brown",
-        "Indie Rock",
-    }
-    assert all(p.genre for p in added)
-    for p in added:  # starters must never ask for an unsafe loudness
-        assert p.settings["master"] <= 60
+    assert len(added) == len(entries)
+    assert {p.genre for p in added} == set(Genre)  # all seven genres have presets
+    for p in added:
+        assert p.notes  # every starter explains itself
+        assert p.settings["master"] <= 60  # never ask for an unsafe loudness
+        assert p.settings == thr_v2.filter_applicable(p.settings)
+
+
+def test_starter_presets_seed_once_and_deleted_ones_stay_deleted(manager):
+    added = manager.seed_starters()
     manager.delete(added[0].id)
-    assert manager.seed_starters() == []  # deleted starters stay deleted
-    assert len(manager.all()) == 4
+    assert manager.seed_starters() == []
+    assert len(manager.all()) == len(added) - 1
+
+
+def test_upgrade_from_first_release_adds_only_new_starters(tmp_path):
+    from thr_control.services.preset_manager import LEGACY_STARTER_IDS, SEED_MARKER
+
+    repo = PresetRepository(tmp_path / "lib")
+    repo.directory.mkdir(parents=True)
+    (repo.directory / SEED_MARKER).write_text("starter presets were added once\n")  # old marker
+    # the user already has (and may have deleted) the original five
+    manager = PresetManager(repo)
+    added = manager.seed_starters()
+    names = {p.name for p in added}
+    assert not names & {"Warm Jazz", "Texas Blues", "Indie Clean", "Golden Brown", "Indie Rock"}
+    assert len(added) == len(_starter_entries()) - len(LEGACY_STARTER_IDS)
+    assert manager.seed_starters() == []  # and nothing more on the next start
+
+
+def test_set_notes(manager):
+    p = manager.create("N", SETTINGS)
+    q = manager.set_notes(p.id, "slow and dark")
+    assert manager.get(p.id).notes == "slow and dark" and q.modified >= p.modified
+    assert [x.name for x in manager.search("dark")] == ["N"]  # notes are searchable
+    with pytest.raises(PresetError):
+        manager.set_notes(p.id, "x" * 1001)
+    assert manager.get(p.id).notes == "slow and dark"
 
 
 # -- applying to an amp --------------------------------------------------
@@ -210,7 +247,7 @@ def test_cli_presets_list_export_import_apply_dry_run(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Warm Jazz" in out and "Indie Rock" in out
     assert cli.main(["presets", "list", "--library", lib, "--query", "blues"]) == 0
-    assert capsys.readouterr().out.count("\n") == 1
+    assert capsys.readouterr().out.count("\n") == 3  # Delta Blues, Slow Blues Crunch, Texas Blues
     export = str(tmp_path / "all.json")
     assert cli.main(["presets", "export", export, "--library", lib]) == 0
     assert cli.main(["presets", "import", export, "--library", str(tmp_path / "lib2")]) == 0

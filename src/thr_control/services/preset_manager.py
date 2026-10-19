@@ -22,6 +22,13 @@ from ..protocol.thr_v2 import filter_applicable
 from ..storage.repository import PresetRepository
 
 SEED_MARKER = ".starters_seeded"
+LEGACY_STARTER_IDS = (
+    "warm-jazz",
+    "texas-blues",
+    "indie-clean",
+    "golden-brown",
+    "indie-rock",
+)
 
 
 @dataclass
@@ -206,22 +213,43 @@ class PresetManager:
 
     # -- starter presets ---------------------------------------------------
     def seed_starters(self) -> list[Preset]:
-        """Add the bundled starter presets once per library (deleting them keeps them gone)."""
+        """Add bundled starter presets that this library has not been offered yet.
+
+        The marker file remembers which starters were offered, so deleting one keeps it
+        deleted, while starters added in a later release still arrive once.
+        """
         marker = self.repo.directory / SEED_MARKER
+        offered: set[str] = set()
         if marker.exists():
-            return []
-        text = (
+            try:
+                offered = set(json.loads(marker.read_text(encoding="utf-8"))["offered"])
+            except (ValueError, KeyError, TypeError, OSError):
+                offered = set(LEGACY_STARTER_IDS)  # marker from the first release (plain text)
+        raw = (
             resources.files("thr_control.data").joinpath("starter_presets.json").read_text("utf-8")
         )
-        tmp = self.repo.directory.parent / ".starter_import.json"
+        entries = json.loads(raw)["presets"]
+        added: list[Preset] = []
+        for entry in entries:
+            starter_id = entry["starter_id"]
+            if starter_id in offered:
+                continue
+            data = {k: v for k, v in entry.items() if k != "starter_id"}
+            data["settings"] = filter_applicable(data["settings"])
+            preset = Preset.model_validate(data).model_copy(update={"id": uuid4().hex})
+            added.append(self._save(preset))
         self.repo.directory.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(text, encoding="utf-8")
-        try:
-            added = self.import_presets(tmp).added
-        finally:
-            tmp.unlink(missing_ok=True)
-        marker.write_text("starter presets were added once\n", encoding="utf-8")
+        offered |= {e["starter_id"] for e in entries}
+        marker.write_text(json.dumps({"offered": sorted(offered)}) + "\n", encoding="utf-8")
         return added
+
+    def set_notes(self, preset_id: str, notes: str) -> Preset:
+        preset = self._require(preset_id)
+        try:
+            updated = Preset.model_validate({**preset.model_dump(), "notes": notes})
+        except ValidationError as exc:
+            raise PresetError(str(exc)) from exc
+        return self._save(updated)
 
 
 GENRE_FILTERS: list[str] = [g.value for g in Genre] + [UNCATEGORIZED]
