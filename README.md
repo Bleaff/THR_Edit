@@ -59,6 +59,20 @@ Packaging recipes for Arch (`packaging/arch`), macOS (`packaging/macos`) and Fla
 - [Protocol notes](docs/protocol.md): what is known about the amp's USB-MIDI protocol, verified on real hardware.
 - [macOS testing](docs/macos-testing.md): checklist for Mac users.
 
+## Experimental Firmware Cross-Flashing
+
+The developer successfully converted one first-generation THR5A to THR5 V2 using Linux (Manjaro) and USB-MIDI.
+This is an unsupported modification: Yamaha explicitly excludes THR5A from the V2 updater. A failed flash can leave the
+amplifier unusable, and restoring the original THR5A firmware remains untested.
+
+- [Cross-flashing guide](docs/firmware-thr5a-to-thr5-v2.md): mandatory backups, artifact verification, flashing and audio checks.
+- [Recovery guide](docs/firmware-recovery.md): verified backup preparation and the limits of experimental recovery.
+- [Firmware checksums](firmware/checksums.sha256): fingerprints of the specific successful experiment; see the
+  [firmware policy](firmware/README.md) for filenames and licensing.
+
+Flashing is independent of THR Control. The application does not perform firmware updates and continues to block firmware
+and bootloader SysEx commands. Yamaha firmware is proprietary and is not included under this project's AGPL license.
+
 ## Development
 
 ```sh

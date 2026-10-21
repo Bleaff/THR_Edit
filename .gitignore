@@ -6,3 +6,33 @@ __pycache__/
 .mypy_cache/
 *.egg-info/
 logs/
+
+# Proprietary Yamaha firmware: use these private directories for all local artifacts.
+/firmware/local/
+/firmware/downloads/
+/firmware/extracted/
+/firmware/backups/
+/firmware/recovery/
+/yamaha-thr5a-backup/
+/thr10/
+# Also catch known artifact names accidentally placed elsewhere in the repository.
+*.bin
+thr5a_*.mid
+thr5a_*.sha256
+thr5_v2_*.mid
+THR_Firm_*
+THR5A_FACTORY_BACKUP*
+THR5A_SAFE_BACKUP*/
+firmware.sha256
+*THR*Updater*
+*THR*updater*
+*thr*updater*
+*.dmg
+*.exe
+*.zip
+*.tar.gz
+*.tgz
+*.7z
+*.ips
+*.bps
+*.xdelta

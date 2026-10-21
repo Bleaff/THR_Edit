@@ -2,6 +2,12 @@
 
 Only verified findings belong in "Verified". Everything else is unverified.
 
+Firmware/bootloader research is documented separately in the
+[experimental cross-flashing guide](firmware-thr5a-to-thr5-v2.md) and
+[recovery guide](firmware-recovery.md). Those manual procedures are outside normal amplifier control.
+THR Control must continue to reject firmware read, erase, write and bootloader SysEx commands at its existing send layer;
+these documents do not add commands to its allowlist.
+
 ## Verified (observed on hardware, read-only)
 
 - ALSA client `THR5`, port `THR5 MIDI 1` (USB 0499:1506), appears in both input and output lists.
